@@ -28,6 +28,7 @@ from wtforms import (
     TimeField,
 )
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
+from wtforms.widgets import NumberInput
 
 from ..extensions import db
 from ..models import (
@@ -118,6 +119,9 @@ class WorkingWeekForm(FlaskForm):
     name = StringField("Name", validators=[DataRequired(), Length(max=64)])
     hours = FloatField(
         "Standard working hours per week",
+        # A FloatField renders as a plain text box by default; a number input
+        # gives the quarter-hour steps a contract is actually written in.
+        widget=NumberInput(step="0.25", min=1, max=168),
         validators=[
             DataRequired(message="Enter the contracted hours per week."),
             NumberRange(min=1, max=168, message="Between 1 and 168 hours."),
@@ -602,6 +606,17 @@ def timesheets_weekly_csv():
 # --------------------------------------------------------------------------
 # Shift patterns
 # --------------------------------------------------------------------------
+def _field_error(field, message: str) -> None:
+    """Add an error to a form field after validation has already run.
+
+    A clash is only detectable against the database, so it cannot be a WTForms
+    validator. Reporting it on the field rather than as a flash matters now the
+    forms live in a dialog: a flash renders behind the modal backdrop, where
+    whoever typed the name would never see it.
+    """
+    field.errors = list(field.errors) + [message]
+
+
 def _save_shift_pattern(form: ShiftPatternForm, pattern: ShiftPattern | None) -> bool:
     """Apply the form to *pattern* (or a new one). Returns False on a name clash."""
     clash = db.session.scalars(
@@ -611,7 +626,7 @@ def _save_shift_pattern(form: ShiftPatternForm, pattern: ShiftPattern | None) ->
         )
     ).first()
     if clash is not None:
-        flash(f"A shift called {form.name.data!r} already exists.", "error")
+        _field_error(form.name, f"A shift called {form.name.data!r} already exists.")
         return False
 
     if pattern is None:
@@ -642,8 +657,15 @@ def _render_shifts(
     week_form: WorkingWeekForm | None = None,
     editing: ShiftPattern | None = None,
     editing_week: WorkingWeek | None = None,
+    open_dialog: str | None = None,
 ):
-    """The Shifts page: shift patterns and standard weeks, each with its form."""
+    """The Shifts page: shift patterns and standard weeks, each with its dialog.
+
+    Both add/edit forms live in a popup. *open_dialog* is "shift" or "week" when
+    the page should load with that one already open - editing a record, or
+    coming back from a submission the server would not accept, so the entered
+    values are still in front of whoever has to fix them.
+    """
     return render_template(
         "admin/shifts.html",
         patterns=db.session.scalars(select(ShiftPattern).order_by(ShiftPattern.name)).all(),
@@ -652,6 +674,7 @@ def _render_shifts(
         week_form=week_form or WorkingWeekForm(),
         editing=editing,
         editing_week=editing_week,
+        open_dialog=open_dialog,
     )
 
 
@@ -661,7 +684,10 @@ def shifts():
     if form.validate_on_submit() and _save_shift_pattern(form, None):
         flash(f"Added shift {form.name.data!r}.", "success")
         return redirect(url_for("admin.shifts"))
-    return _render_shifts(form=form)
+    # A rejected submission re-opens the dialog it came from; a plain GET does not.
+    return _render_shifts(
+        form=form, open_dialog="shift" if request.method == "POST" else None
+    )
 
 
 @bp.route("/shifts/<int:pattern_id>/edit", methods=["GET", "POST"])
@@ -671,7 +697,7 @@ def shift_edit(pattern_id: int):
     if form.validate_on_submit() and _save_shift_pattern(form, pattern):
         flash(f"Updated shift {pattern.name!r}.", "success")
         return redirect(url_for("admin.shifts"))
-    return _render_shifts(form=form, editing=pattern)
+    return _render_shifts(form=form, editing=pattern, open_dialog="shift")
 
 
 @bp.post("/shifts/<int:pattern_id>/delete")
@@ -702,7 +728,9 @@ def _save_working_week(form: WorkingWeekForm, week: WorkingWeek | None) -> bool:
         )
     ).first()
     if clash is not None:
-        flash(f"A standard week called {form.name.data!r} already exists.", "error")
+        _field_error(
+            form.name, f"A standard week called {form.name.data!r} already exists."
+        )
         return False
 
     if week is None:
@@ -729,8 +757,7 @@ def working_week_add():
     if form.validate_on_submit() and _save_working_week(form, None):
         flash(f"Added standard week {form.name.data!r}.", "success")
         return redirect(url_for("admin.shifts"))
-    # Field errors are rendered inline next to the input, as on the shift form.
-    return _render_shifts(week_form=form)
+    return _render_shifts(week_form=form, open_dialog="week")
 
 
 @bp.route("/shifts/weeks/<int:week_id>/edit", methods=["GET", "POST"])
@@ -740,7 +767,7 @@ def working_week_edit(week_id: int):
     if form.validate_on_submit() and _save_working_week(form, week):
         flash(f"Updated standard week {week.name!r}.", "success")
         return redirect(url_for("admin.shifts"))
-    return _render_shifts(week_form=form, editing_week=week)
+    return _render_shifts(week_form=form, editing_week=week, open_dialog="week")
 
 
 @bp.post("/shifts/weeks/<int:week_id>/delete")

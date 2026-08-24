@@ -700,6 +700,89 @@ body.mf-kiosk {
     font-family: var(--mf-font-head);
 }
 
+/* --- Section headers with an action button ------------------------------- */
+.mf-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 1.5rem 0 0.5rem;
+}
+
+.mf-section-head h2 {
+    margin: 0;
+}
+
+/* --- Dialogs ------------------------------------------------------------- */
+/* The native <dialog> element: the browser supplies the backdrop, Escape to
+   close and the focus trap, so there is no modal library to keep up to date. */
+dialog.mf-dialog {
+    width: min(34rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 4rem);
+    overflow-y: auto;
+    padding: 0;
+    border: 1px solid var(--mf-grey-300);
+    border-radius: var(--mf-radius);
+    box-shadow: 0 8px 28px rgba(35, 40, 45, 0.28);
+    background: var(--mf-white);
+    color: var(--mf-grey-900);
+}
+
+dialog.mf-dialog::backdrop {
+    background: rgba(10, 47, 79, 0.45);
+}
+
+.mf-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1.25rem;
+    border-bottom: 1px solid var(--mf-grey-300);
+    background: var(--mf-blue-100);
+}
+
+.mf-dialog-head h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--mf-blue-900);
+}
+
+/* A plain glyph button, so closing does not look like a form action. */
+.mf-dialog-close {
+    font-family: var(--mf-font-head);
+    font-size: 1.4rem;
+    line-height: 1;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid transparent;
+    border-radius: var(--mf-radius);
+    background: none;
+    color: var(--mf-blue-900);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.mf-dialog-close:hover {
+    background: var(--mf-white);
+    border-color: var(--mf-grey-300);
+}
+
+.mf-dialog-body {
+    padding: 1.1rem 1.25rem 1.25rem;
+}
+
+/* The form fills the dialog rather than the 26rem default of a page form. */
+.mf-dialog-body input,
+.mf-dialog-body select,
+.mf-dialog-body textarea {
+    max-width: 100%;
+}
+
+.mf-dialog-body .mf-checkbox input {
+    width: auto;
+}
+
 .mf-visually-hidden {
     position: absolute;
     width: 1px;
@@ -712,7 +795,9 @@ body.mf-kiosk {
 @media print {
     .mf-header,
     .mf-btn-row,
-    .mf-filter-row {
+    .mf-filter-row,
+    dialog.mf-dialog,
+    .mf-section-head .mf-btn {
         display: none;
     }
 

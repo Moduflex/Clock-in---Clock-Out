@@ -7,7 +7,10 @@
     daily paid band, and the <strong>standard week</strong> sets how many hours in a
     Monday&ndash;Sunday week are paid at standard rate before overtime starts.</p>
 
-<h2>Shifts</h2>
+<div class="mf-section-head">
+    <h2>Shifts</h2>
+    <button class="mf-btn" type="button" data-dialog-open="shift-dialog">Add a shift</button>
+</div>
 <p class="mf-note">Clocking in early pays from the shift start. Pay is counted in 15-minute
     steps &mdash; a 07:34 arrival is paid from 07:45.</p>
 
@@ -63,47 +66,10 @@
     actual clocked times (still in 15-minute steps).</p></div>
 {% endif %}
 
-<h3>{{ 'Edit ' + editing.name if editing else 'Add a shift' }}</h3>
-<div class="mf-card" style="max-width: 34rem;">
-    <form method="post"
-          action="{{ url_for('admin.shift_edit', pattern_id=editing.id) if editing else url_for('admin.shifts') }}"
-          novalidate>
-        {{ form.csrf_token }}
-
-        {% for field in [form.name, form.start_time, form.end_time, form.unpaid_break_minutes, form.break_applies_after_minutes] %}
-        <div class="mf-field">
-            {{ field.label }}
-            {{ field() }}
-            {% for error in field.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
-        </div>
-        {% endfor %}
-
-        <div class="mf-field mf-checkbox">
-            {{ form.pay_beyond_end() }} {{ form.pay_beyond_end.label }}
-        </div>
-        <div class="mf-field mf-checkbox">
-            {{ form.is_default() }} {{ form.is_default.label }}
-        </div>
-        <p class="mf-note">An end time at or before the start time means the shift runs overnight.
-            The unpaid break is only deducted once someone's paid time exceeds the
-            "deduct break only after" threshold &mdash; so a short morning or afternoon
-            stint keeps its full hours. Set the threshold to 0 to always deduct it.</p>
-        <p class="mf-note">Leave <strong>pay time worked after the shift end</strong> ticked so a
-            late finish is paid and shows up as overtime once the standard week is used up.
-            Untick it where staying on is not authorised work: pay is then trimmed back to the
-            shift end, exactly as before. An <em>early</em> arrival is always paid from the shift
-            start either way &mdash; waiting for the day to begin is not overtime.</p>
-
-        <div class="mf-btn-row">
-            <button class="mf-btn" type="submit">{{ 'Save changes' if editing else 'Add shift' }}</button>
-            {% if editing %}
-            <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.shifts') }}">Cancel</a>
-            {% endif %}
-        </div>
-    </form>
+<div class="mf-section-head">
+    <h2>Standard working weeks</h2>
+    <button class="mf-btn" type="button" data-dialog-open="week-dialog">Add a standard week</button>
 </div>
-
-<h2>Standard working weeks</h2>
 <p class="mf-note">Hours worked in a Monday&ndash;Sunday week beyond the standard week are
     reported as overtime. Someone on a 40-hour week who works 65 paid hours has
     40 standard and 25 overtime.</p>
@@ -146,34 +112,124 @@
     hour is reported as standard and nothing is treated as overtime.</p></div>
 {% endif %}
 
-<h3>{{ 'Edit ' + editing_week.name if editing_week else 'Add a standard week' }}</h3>
-<div class="mf-card" style="max-width: 34rem;">
-    <form method="post"
-          action="{{ url_for('admin.working_week_edit', week_id=editing_week.id) if editing_week else url_for('admin.working_week_add') }}"
-          novalidate>
-        {{ week_form.csrf_token }}
+{# --- Add / edit a shift ------------------------------------------------- #}
+<dialog class="mf-dialog" id="shift-dialog"
+        aria-labelledby="shift-dialog-title"
+        {% if open_dialog == 'shift' %}data-open="true"{% endif %}
+        {% if editing %}data-return-to="{{ url_for('admin.shifts') }}"{% endif %}>
+    <div class="mf-dialog-head">
+        <h2 id="shift-dialog-title">{{ 'Edit ' + editing.name if editing else 'Add a shift' }}</h2>
+        {% if editing %}
+        <a class="mf-dialog-close" href="{{ url_for('admin.shifts') }}" aria-label="Close">&times;</a>
+        {% else %}
+        <button class="mf-dialog-close" type="button" data-dialog-close aria-label="Close">&times;</button>
+        {% endif %}
+    </div>
+    <div class="mf-dialog-body">
+        <form method="post"
+              action="{{ url_for('admin.shift_edit', pattern_id=editing.id) if editing else url_for('admin.shifts') }}"
+              novalidate>
+            {{ form.csrf_token }}
 
-        {% for field in [week_form.name, week_form.hours] %}
-        <div class="mf-field">
-            {{ field.label }}
-            {{ field(step='0.25') if field.name == 'hours' else field() }}
-            {% for error in field.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
-        </div>
-        {% endfor %}
+            {% for field in [form.name, form.start_time, form.end_time, form.unpaid_break_minutes, form.break_applies_after_minutes] %}
+            <div class="mf-field">
+                {{ field.label }}
+                {{ field() }}
+                {% for error in field.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
+            </div>
+            {% endfor %}
 
-        <div class="mf-field mf-checkbox">
-            {{ week_form.is_default() }} {{ week_form.is_default.label }}
-        </div>
-        <p class="mf-note">Add as many as you need &mdash; 37.5, 39, a four-day 32 &mdash; then
-            pick one per person on their <a href="{{ url_for('admin.employees') }}">employee</a>
-            record. Anyone without one uses the default.</p>
+            <div class="mf-field mf-checkbox">
+                {{ form.pay_beyond_end() }} {{ form.pay_beyond_end.label }}
+            </div>
+            <div class="mf-field mf-checkbox">
+                {{ form.is_default() }} {{ form.is_default.label }}
+            </div>
+            <p class="mf-note">An end time at or before the start time means the shift runs
+                overnight. The unpaid break is only deducted once someone's paid time exceeds
+                the "deduct break only after" threshold &mdash; so a short morning or afternoon
+                stint keeps its full hours. Set the threshold to 0 to always deduct it.</p>
+            <p class="mf-note">Leave <strong>pay time worked after the shift end</strong> ticked
+                so a late finish is paid and shows up as overtime once the standard week is used
+                up. Untick it where staying on is not authorised work: pay is then trimmed back
+                to the shift end. An <em>early</em> arrival is always paid from the shift start
+                either way &mdash; waiting for the day to begin is not overtime.</p>
 
-        <div class="mf-btn-row">
-            <button class="mf-btn" type="submit">{{ 'Save changes' if editing_week else 'Add standard week' }}</button>
-            {% if editing_week %}
-            <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.shifts') }}">Cancel</a>
-            {% endif %}
-        </div>
-    </form>
-</div>
+            <div class="mf-btn-row">
+                <button class="mf-btn" type="submit">{{ 'Save changes' if editing else 'Add shift' }}</button>
+                {% if editing %}
+                <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.shifts') }}">Cancel</a>
+                {% else %}
+                <button class="mf-btn mf-btn-secondary" type="button" data-dialog-close>Cancel</button>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</dialog>
+
+{# --- Add / edit a standard week ----------------------------------------- #}
+<dialog class="mf-dialog" id="week-dialog"
+        aria-labelledby="week-dialog-title"
+        {% if open_dialog == 'week' %}data-open="true"{% endif %}
+        {% if editing_week %}data-return-to="{{ url_for('admin.shifts') }}"{% endif %}>
+    <div class="mf-dialog-head">
+        <h2 id="week-dialog-title">{{ 'Edit ' + editing_week.name if editing_week else 'Add a standard week' }}</h2>
+        {% if editing_week %}
+        <a class="mf-dialog-close" href="{{ url_for('admin.shifts') }}" aria-label="Close">&times;</a>
+        {% else %}
+        <button class="mf-dialog-close" type="button" data-dialog-close aria-label="Close">&times;</button>
+        {% endif %}
+    </div>
+    <div class="mf-dialog-body">
+        <form method="post"
+              action="{{ url_for('admin.working_week_edit', week_id=editing_week.id) if editing_week else url_for('admin.working_week_add') }}"
+              novalidate>
+            {{ week_form.csrf_token }}
+
+            <div class="mf-field">
+                {{ week_form.name.label }}
+                {{ week_form.name(placeholder='e.g. 37.5-hour week') }}
+                {% for error in week_form.name.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="mf-field">
+                {{ week_form.hours.label }}
+                {{ week_form.hours() }}
+                {% for error in week_form.hours.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
+            </div>
+
+            <div class="mf-field mf-checkbox">
+                {{ week_form.is_default() }} {{ week_form.is_default.label }}
+            </div>
+            <p class="mf-note">Add as many as you need &mdash; 37.5, 39, a four-day 32 &mdash;
+                then pick one per person on their
+                <a href="{{ url_for('admin.employees') }}">employee</a> record. Anyone without
+                one uses the default.</p>
+
+            <div class="mf-btn-row">
+                <button class="mf-btn" type="submit">{{ 'Save changes' if editing_week else 'Add standard week' }}</button>
+                {% if editing_week %}
+                <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.shifts') }}">Cancel</a>
+                {% else %}
+                <button class="mf-btn mf-btn-secondary" type="button" data-dialog-close>Cancel</button>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dialogs.js') }}"></script>
+{# Without JavaScript a <dialog> stays hidden, which would put both forms out of
+   reach. Falling back to showing them inline keeps the page usable. #}
+<noscript>
+    <style>
+        dialog.mf-dialog {
+            display: block;
+            position: static;
+            margin: 0 0 1.25rem;
+            width: min(34rem, 100%);
+        }
+    </style>
+</noscript>
 {% endblock %}

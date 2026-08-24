@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from app.face.engine import FaceObservation, NoFaceFound
 from app.face.liveness import LivenessResult
 from app.models import AttendanceEvent
@@ -299,6 +301,99 @@ def test_shift_pattern_can_be_added_edited_and_deleted(logged_in, db):
     assert db.session.query(ShiftPattern).count() == 0
 
 
+# --- the add/edit popups on the Shifts and hours page -------------------------
+def _dialog(body: str, dialog_id: str) -> str:
+    """The opening tag of one dialog, where its data- attributes live."""
+    start = body.index(f'id="{dialog_id}"')
+    return body[body.rindex("<dialog", 0, start) : body.index(">", start) + 1]
+
+
+def test_the_add_forms_start_closed_behind_a_button(logged_in, db):
+    body = logged_in.get("/admin/shifts").data.decode("utf-8")
+
+    # Both popups are in the page, with a button to open each.
+    assert 'data-dialog-open="shift-dialog"' in body
+    assert 'data-dialog-open="week-dialog"' in body
+    assert ">Add a shift<" in body
+    assert ">Add a standard week<" in body
+    # ...and neither opens on a plain page load.
+    assert "data-open" not in _dialog(body, "shift-dialog")
+    assert "data-open" not in _dialog(body, "week-dialog")
+
+
+def test_editing_a_shift_opens_its_popup_ready_filled(logged_in, db):
+    from app.models import ShiftPattern
+
+    pattern = ShiftPattern(
+        name="Earlies", start_time=dt.time(6, 0), end_time=dt.time(14, 0)
+    )
+    db.session.add(pattern)
+    db.session.commit()
+
+    body = logged_in.get(f"/admin/shifts/{pattern.id}/edit").data.decode("utf-8")
+    tag = _dialog(body, "shift-dialog")
+
+    assert 'data-open="true"' in tag
+    # Closing it any way at all returns to the plain page, so a later "Add"
+    # click cannot re-open the form still pointed at this record.
+    assert 'data-return-to="/admin/shifts"' in tag
+    assert 'value="Earlies"' in body
+    assert "Edit Earlies" in body
+    assert "data-open" not in _dialog(body, "week-dialog")  # the other stays shut
+
+
+def test_editing_a_standard_week_opens_its_own_popup(logged_in, db):
+    from app.models import WorkingWeek
+
+    week = WorkingWeek(name="32-hour week", hours=32.0)
+    db.session.add(week)
+    db.session.commit()
+
+    body = logged_in.get(f"/admin/shifts/weeks/{week.id}/edit").data.decode("utf-8")
+
+    assert 'data-open="true"' in _dialog(body, "week-dialog")
+    assert "data-open" not in _dialog(body, "shift-dialog")
+    assert 'value="32-hour week"' in body
+
+
+def test_a_rejected_shift_reopens_the_popup_with_the_typed_values(logged_in, db):
+    """A name clash must come back inside the dialog, not behind it."""
+    from app.models import ShiftPattern
+
+    data = {
+        "name": "Standard day",
+        "start_time": "07:30",
+        "end_time": "16:00",
+        "unpaid_break_minutes": "30",
+    }
+    logged_in.post("/admin/shifts", data=data, follow_redirects=True)
+    body = logged_in.post("/admin/shifts", data=data).data.decode("utf-8")
+
+    assert 'data-open="true"' in _dialog(body, "shift-dialog")
+    # The message is on the field, inside the dialog - not a flash behind it.
+    assert '<div class="mf-error">A shift called' in body
+    assert 'value="Standard day"' in body  # what they typed is still there
+    assert db.session.query(ShiftPattern).count() == 1
+
+
+def test_a_rejected_standard_week_reopens_its_popup(logged_in, db):
+    body = logged_in.post(
+        "/admin/shifts/weeks", data={"name": "Silly", "hours": "500"}
+    ).data.decode("utf-8")
+
+    assert 'data-open="true"' in _dialog(body, "week-dialog")
+    assert '<div class="mf-error">Between 1 and 168 hours.' in body
+    assert "data-open" not in _dialog(body, "shift-dialog")
+
+
+def test_the_popups_work_without_javascript(logged_in, db):
+    """A dialog is hidden with JS off, so the page falls back to inline forms."""
+    body = logged_in.get("/admin/shifts").data.decode("utf-8")
+    assert "js/dialogs.js" in body
+    assert "<noscript>" in body
+    assert "position: static" in body
+
+
 def test_pay_beyond_end_survives_a_round_trip_through_the_form(logged_in, db):
     """Ticking and unticking the late-finish switch must both stick."""
     from app.models import ShiftPattern
@@ -411,7 +506,6 @@ def test_employee_form_saves_the_standard_week(logged_in, db):
 
 def test_timesheets_default_to_whole_monday_to_sunday_weeks(logged_in, db):
     """The page's own dates come back as a Monday and a Sunday."""
-    import datetime as dt
     import re
 
     make_employee(db)

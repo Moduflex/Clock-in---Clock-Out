@@ -17,6 +17,10 @@ the network, then drives the real ``kiosk.js`` with fake timers and asserts that
 * the next person in a queue is served without the scene emptying;
 * a second person clocks while the first person's result is still on screen.
 
+``tests/js/dialogs_test.js`` covers the back-office add/edit popups, where the
+failure that matters is an edit dialog that closes without leaving its URL - the
+next "Add" click would then overwrite the record instead of adding one.
+
 There is also ``tests/js/presence_test.js``, which drives the presence detector
 through awkward departures (lingering at the edge of view, lighting drift, a brief
 pass-through) to check its background model does not learn a person as scenery.
@@ -59,7 +63,30 @@ def test_kiosk_state_machine():
 
 
 @needs_node
-@pytest.mark.parametrize("script", ["kiosk.js", "capture.js", "enrol.js"])
+def test_admin_dialogs():
+    """The add/edit popups on the Shifts and hours page.
+
+    Worth covering because one failure mode there is silent data loss: an edit
+    popup lives at its own URL, and if closing it did not leave that URL the
+    next "Add" click would re-open the form still aimed at the record being
+    edited, and saving would overwrite it instead of adding a new one.
+    """
+    harness = HARNESS.parent / "dialogs_test.js"
+    result = subprocess.run(
+        [NODE, str(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=HARNESS.parent.parent.parent,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"dialogs.js harness reported failures:\n{output}"
+    assert "checks passed" in output
+    assert "FAIL" not in output, output
+
+
+@needs_node
+@pytest.mark.parametrize("script", ["kiosk.js", "capture.js", "enrol.js", "dialogs.js"])
 def test_browser_scripts_parse(script):
     """A syntax error in kiosk JavaScript breaks clocking with no server error."""
     path = HARNESS.parent.parent.parent / "app" / "static" / "js" / script
