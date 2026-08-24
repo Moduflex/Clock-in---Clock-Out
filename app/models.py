@@ -120,6 +120,9 @@ class Employee(db.Model):
     fingerprints: Mapped[list["FingerprintCredential"]] = relationship(
         back_populates="employee", cascade="all, delete-orphan", lazy="selectin"
     )
+    fingerprint_templates: Mapped[list["FingerprintTemplate"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan", lazy="selectin"
+    )
 
     @property
     def full_name(self) -> str:
@@ -267,6 +270,50 @@ class FingerprintCredential(db.Model):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<FingerprintCredential {self.device_label}#{self.finger_id} -> {self.employee_id}>"
+
+
+class FingerprintTemplate(db.Model):
+    """An enrolled fingerprint, for readers where *we* do the matching.
+
+    This is the other half of fingerprint support. A slot-based reader matches
+    on the device and only reports a slot number, so no biometric data reaches
+    us (see FingerprintCredential). A desktop USB reader with an SDK hands back
+    a template instead, and matching happens in our code - which means the
+    template really is biometric data at rest, and belongs in whatever DPIA
+    covers the face templates.
+
+    ``driver`` records which SDK produced the bytes. Templates are not portable
+    between vendors, so a reader swap must not silently compare ZKTeco bytes
+    against DigitalPersona ones - the matcher filters on this.
+    """
+
+    __tablename__ = "fingerprint_template"
+    __table_args__ = (
+        Index("ix_fingerprint_template_lookup", "driver", "employee_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    template: Mapped[bytes] = mapped_column(LargeBinary(4096), nullable=False)
+    driver: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Which finger, when known - handy for "use your other thumb" at the kiosk.
+    position: Mapped[int | None] = mapped_column(Integer)
+    quality: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_user.id", ondelete="SET NULL")
+    )
+
+    employee: Mapped[Employee] = relationship(back_populates="fingerprint_templates")
+
+    @property
+    def position_name(self) -> str | None:
+        return FINGER_POSITIONS.get(self.position) if self.position else None
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<FingerprintTemplate {self.employee_id} {self.driver} pos={self.position}>"
 
 
 class AttendanceEvent(db.Model):

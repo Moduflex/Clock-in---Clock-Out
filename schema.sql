@@ -89,6 +89,25 @@ CREATE TABLE fingerprint_credential (
 CREATE INDEX ix_fingerprint_credential_employee_id ON fingerprint_credential (employee_id);
 CREATE INDEX ix_fingerprint_lookup ON fingerprint_credential (device_label, finger_id);
 
+CREATE TABLE fingerprint_template (
+	id INTEGER NOT NULL AUTO_INCREMENT,
+	employee_id INTEGER NOT NULL,
+	template BLOB(4096) NOT NULL,
+	driver VARCHAR(32) NOT NULL,
+	position INTEGER,
+	quality FLOAT,
+	created_at DATETIME NOT NULL,
+	created_by_id INTEGER,
+	PRIMARY KEY (id),
+	FOREIGN KEY(employee_id) REFERENCES employee (id) ON DELETE CASCADE,
+	FOREIGN KEY(created_by_id) REFERENCES admin_user (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Real biometric data, unlike fingerprint_credential. Only used with readers
+-- that hand back a template for the application to match.
+CREATE INDEX ix_fingerprint_template_employee_id ON fingerprint_template (employee_id);
+CREATE INDEX ix_fingerprint_template_lookup ON fingerprint_template (driver, employee_id);
+
 CREATE TABLE face_template (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	employee_id INTEGER NOT NULL, 

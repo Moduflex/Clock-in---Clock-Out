@@ -17,7 +17,9 @@ this script - Windows keeps those, and only ever tells us a position number.
 
 Two consequences you need to know about, both discussed in the README:
 
-* **Ten people per Windows account**, because there are only ten fingers.
+* **Ten people per Windows account**, because there are only ten fingers. For
+  a bigger workforce, create a second local Windows account, enrol ten more
+  fingers on it, and give each account its own reader name with ``--account``.
 * Everyone enrolled can also **sign into that Windows account**, so the kiosk
   account must be a locked-down local account with nothing useful on it.
 
@@ -44,6 +46,7 @@ import ctypes
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -91,6 +94,7 @@ HRESULT_NAMES = {
     0x80098019: "The reader is busy",
     0x80098017: "An enrolment is already in progress",
     0x80098030: "Biometrics are disabled by policy on this machine",
+    0x80098003: "This driver does not support that operation",
 }
 
 
@@ -106,6 +110,38 @@ def hresult_text(code: int) -> str:
 def succeeded(code: int) -> bool:
     """True for any success HRESULT, S_OK or informational."""
     return not code & 0x80000000
+
+
+DEFAULT_TIMEOUT = 30.0
+
+
+def call_blocking(fn, timeout: float):
+    """Run a blocking framework call without freezing the terminal.
+
+    The capture and identify calls wait for a finger, and a blocking native
+    call on the main thread also stops Ctrl+C from being delivered - so the
+    whole terminal looks frozen and cannot even be interrupted. Running it on a
+    daemon thread keeps the program answerable, and lets a call that never
+    returns be reported instead of hanging for ever.
+
+    Returns the HRESULT, or None if it did not come back in time.
+    """
+    outcome: dict = {}
+
+    def run() -> None:
+        try:
+            outcome["code"] = fn()
+        except Exception as exc:  # pragma: no cover - defensive
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return None
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["code"]
 
 
 # --- structures ---------------------------------------------------------------
@@ -136,6 +172,31 @@ class _IdentityValue(ctypes.Union):
 
 class WinBioIdentity(ctypes.Structure):
     _fields_ = [("Type", ctypes.c_ulong), ("Value", _IdentityValue)]
+
+
+WINBIO_MAX_STRING_LEN = 256
+
+
+class _Version(ctypes.Structure):
+    _fields_ = [("MajorVersion", ctypes.c_ulong), ("MinorVersion", ctypes.c_ulong)]
+
+
+class WinBioUnitSchema(ctypes.Structure):
+    """What the framework knows about one attached sensor."""
+
+    _fields_ = [
+        ("UnitId", ctypes.c_ulong),
+        ("PoolType", ctypes.c_ulong),
+        ("BiometricFactor", ctypes.c_ulong),
+        ("SensorSubType", ctypes.c_ulong),
+        ("Capabilities", ctypes.c_ulong),
+        ("DeviceInstanceId", ctypes.c_wchar * WINBIO_MAX_STRING_LEN),
+        ("Description", ctypes.c_wchar * WINBIO_MAX_STRING_LEN),
+        ("Manufacturer", ctypes.c_wchar * WINBIO_MAX_STRING_LEN),
+        ("Model", ctypes.c_wchar * WINBIO_MAX_STRING_LEN),
+        ("SerialNumber", ctypes.c_wchar * WINBIO_MAX_STRING_LEN),
+        ("FirmwareVersion", _Version),
+    ]
 
 
 # --- library bindings ---------------------------------------------------------
@@ -208,6 +269,13 @@ _winbio.WinBioDeleteTemplate.argtypes = [
 ]
 _winbio.WinBioDeleteTemplate.restype = ctypes.c_uint32
 
+_winbio.WinBioEnumBiometricUnits.argtypes = [
+    wintypes.ULONG,
+    ctypes.POINTER(ctypes.POINTER(WinBioUnitSchema)),
+    ctypes.POINTER(ctypes.c_size_t),
+]
+_winbio.WinBioEnumBiometricUnits.restype = ctypes.c_uint32
+
 _winbio.WinBioFree.argtypes = [ctypes.c_void_p]
 _winbio.WinBioFree.restype = ctypes.c_uint32
 
@@ -244,6 +312,50 @@ _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.restype = wintypes.BOOL
 _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
 _kernel32.LocalFree.restype = ctypes.c_void_p
+
+
+def enum_units() -> list[dict]:
+    """Every fingerprint sensor the framework can see.
+
+    This is how a sensor is found, rather than WinBioLocateSensor: locating
+    waits for somebody to touch the reader, and not every driver implements it -
+    which looks exactly like the program having hung.
+    """
+    array = ctypes.POINTER(WinBioUnitSchema)()
+    count = ctypes.c_size_t(0)
+    code = _winbio.WinBioEnumBiometricUnits(
+        WINBIO_TYPE_FINGERPRINT, ctypes.byref(array), ctypes.byref(count)
+    )
+    if not succeeded(code):
+        raise SystemExit(f"Could not list fingerprint sensors: {hresult_text(code)}")
+    try:
+        return [
+            {
+                "unit": array[i].UnitId,
+                "description": array[i].Description,
+                "manufacturer": array[i].Manufacturer,
+                "model": array[i].Model,
+                "device": array[i].DeviceInstanceId,
+            }
+            for i in range(count.value)
+        ]
+    finally:
+        if array:
+            _winbio.WinBioFree(array)
+
+
+def require_unit() -> dict:
+    """The sensor to use, or a clear explanation of why there is not one."""
+    units = enum_units()
+    if not units:
+        raise SystemExit(
+            """No fingerprint sensor is attached, as far as Windows is concerned.
+Check Device Manager: if the reader shows a warning triangle, or
+  Get-PnpDevice | Where-Object { $_.FriendlyName -match 'finger' }
+reports Code 28, then its driver is not installed. See the README
+section 'Step 0: the driver'."""
+        )
+    return units[0]
 
 
 # --- identity helpers ---------------------------------------------------------
@@ -333,27 +445,29 @@ class Session:
         if self.handle:
             _winbio.WinBioCloseSession(self.handle)
 
-    def locate_sensor(self) -> int:
-        """Wait for a touch and return which reader unit it came from."""
-        unit = wintypes.ULONG(0)
-        code = _winbio.WinBioLocateSensor(self.handle, ctypes.byref(unit))
-        if not succeeded(code):
-            raise SystemExit(f"Could not find the reader: {hresult_text(code)}")
-        return unit.value
+    def unit(self) -> int:
+        """The sensor's unit id, found by enumeration - no touch needed."""
+        return require_unit()["unit"]
 
-    def identify(self) -> tuple[int, str, int] | int:
-        """Wait for a touch. Returns (position, sid, unit), or the error code."""
+    def identify(self, timeout: float = DEFAULT_TIMEOUT):
+        """Wait for a touch. Returns (position, sid, unit), an error code, or
+        None if nothing arrived within *timeout* seconds."""
         unit = wintypes.ULONG(0)
         identity = WinBioIdentity()
         position = ctypes.c_ubyte(0)
         reject = wintypes.ULONG(0)
-        code = _winbio.WinBioIdentify(
-            self.handle,
-            ctypes.byref(unit),
-            ctypes.byref(identity),
-            ctypes.byref(position),
-            ctypes.byref(reject),
+        code = call_blocking(
+            lambda: _winbio.WinBioIdentify(
+                self.handle,
+                ctypes.byref(unit),
+                ctypes.byref(identity),
+                ctypes.byref(position),
+                ctypes.byref(reject),
+            ),
+            timeout,
         )
+        if code is None:
+            return None
         if not succeeded(code):
             return code
         return position.value, sid_string(identity), unit.value
@@ -383,11 +497,29 @@ def post_scan(base_url: str, token: str, finger_id: int, device_label: str) -> d
 
 # --- commands -----------------------------------------------------------------
 def cmd_check() -> int:
-    """Open the reader and report, without needing anyone to touch it."""
+    """Report whether a sensor is really usable. No touch needed."""
     print("Loading winbio.dll ... ok")
     with Session():
         print("Opening the system fingerprint pool ... ok")
-    print("\nThe reader is reachable. Next: --enrol to add a finger, or --list.")
+
+    # Opening the pool succeeds even with no reader attached, so the pool
+    # alone proves nothing. Enumerating the units is what answers it.
+    units = enum_units()
+    print(f"Sensors the framework can see: {len(units)}")
+    for sensor in units:
+        print(
+            f"  unit {sensor['unit']}: {sensor['description']} "
+            f"({sensor['manufacturer']} {sensor['model']})"
+        )
+        print(f"    {sensor['device']}")
+
+    if not units:
+        print()
+        print("No sensor. The driver is probably not installed - see the")
+        print("README section 'Step 0: the driver'.")
+        return 1
+    print()
+    print("Ready. Next: --enrol POSITION to add a finger, or --list.")
     return 0
 
 
@@ -395,8 +527,7 @@ def cmd_list() -> int:
     identity = current_user_identity()
     print(f"Windows account: {sid_string(identity)}\n")
     with Session() as session:
-        print("Touch the reader so Windows can tell which unit to ask about ...")
-        unit = session.locate_sensor()
+        unit = session.unit()
 
         array = ctypes.POINTER(ctypes.c_ubyte)()
         count = ctypes.c_size_t(0)
@@ -408,7 +539,18 @@ def cmd_list() -> int:
             ctypes.byref(count),
         )
         if not succeeded(code):
-            print(f"Could not list enrolments: {hresult_text(code)}")
+            # Not every driver implements enrolment enumeration; the Betterlife
+            # one does not. It is only a convenience - what each enrolled finger
+            # reports is what matters, and --probe answers that directly.
+            print(f"This reader cannot list its enrolments: {hresult_text(code)}")
+            print()
+            print("Use one of these instead:")
+            print("  Settings > Accounts > Sign-in options > Fingerprint")
+            print("      shows and manages what this Windows account has enrolled.")
+            print("  --probe")
+            print("      touch the reader and it reports the position each")
+            print("      enrolled finger actually returns, which is the number")
+            print("      you register in the back office.")
             return 1
         try:
             positions = [array[i] for i in range(count.value)]
@@ -426,7 +568,7 @@ def cmd_list() -> int:
     return 0
 
 
-def cmd_enrol(position: int) -> int:
+def cmd_enrol(position: int, timeout: float = DEFAULT_TIMEOUT) -> int:
     if position not in FINGER_POSITIONS:
         print("Position must be 1-10. See --help for the list.")
         return 2
@@ -436,21 +578,40 @@ def cmd_enrol(position: int) -> int:
           f"{position} in the back office.\n")
 
     with Session() as session:
-        print("Touch the reader once so Windows can find it ...")
-        unit = session.locate_sensor()
+        sensor = require_unit()
+        unit = sensor["unit"]
+        print(f"Using {sensor['description']} ({sensor['model']}), unit {unit}.")
 
         code = _winbio.WinBioEnrollBegin(session.handle, position, unit)
         if not succeeded(code):
             print(f"Could not start enrolment: {hresult_text(code)}")
             return 1
 
+        print()
+        print("Press the finger on the reader now, and keep pressing when asked.")
         try:
             presses = 0
             while True:
                 reject = wintypes.ULONG(0)
-                code = _winbio.WinBioEnrollCapture(
-                    session.handle, ctypes.byref(reject)
+                code = call_blocking(
+                    lambda: _winbio.WinBioEnrollCapture(
+                        session.handle, ctypes.byref(reject)
+                    ),
+                    timeout,
                 )
+                if code is None:
+                    print()
+                    print(f"The reader sent nothing for {timeout:.0f} seconds.")
+                    print()
+                    print("Windows accepted the enrolment request, so this is the")
+                    print("sensor or its driver, not this program. Check in order:")
+                    print("  1. Settings > Accounts > Sign-in options > Fingerprint.")
+                    print("     If Windows' own enrolment cannot read the finger")
+                    print("     either, the fault is below this program entirely.")
+                    print("  2. A different USB port, ideally a USB 2 one.")
+                    print("  3. Another driver version - several are published for")
+                    print("     this hardware id and only some suit each model.")
+                    return 1
                 presses += 1
                 if code == S_OK:
                     break
@@ -461,20 +622,29 @@ def cmd_enrol(position: int) -> int:
                 print(f"  press {presses} not usable: {hresult_text(code)}")
                 if presses > 25:
                     print("Too many failed presses. Starting again may help.")
-                    _winbio.WinBioEnrollDiscard(session.handle)
+                    call_blocking(
+                        lambda: _winbio.WinBioEnrollDiscard(session.handle), 5
+                    )
                     return 1
 
             identity = WinBioIdentity()
             is_new = ctypes.c_ubyte(0)
-            code = _winbio.WinBioEnrollCommit(
-                session.handle, ctypes.byref(identity), ctypes.byref(is_new)
+            code = call_blocking(
+                lambda: _winbio.WinBioEnrollCommit(
+                    session.handle, ctypes.byref(identity), ctypes.byref(is_new)
+                ),
+                timeout,
             )
+            if code is None:
+                print("Saving the enrolment did not complete in time.")
+                return 1
             if not succeeded(code):
                 print(f"Could not save the enrolment: {hresult_text(code)}")
                 return 1
         except KeyboardInterrupt:
-            _winbio.WinBioEnrollDiscard(session.handle)
-            print("\nAbandoned; nothing was saved.")
+            call_blocking(lambda: _winbio.WinBioEnrollDiscard(session.handle), 5)
+            print()
+            print("Abandoned; nothing was saved.")
             return 1
 
     print(f"\nEnrolled position {position} ({FINGER_POSITIONS[position]}).")
@@ -488,8 +658,7 @@ def cmd_delete(position: int) -> int:
         return 2
     identity = current_user_identity()
     with Session() as session:
-        print("Touch the reader once so Windows can find it ...")
-        unit = session.locate_sensor()
+        unit = session.unit()
         code = _winbio.WinBioDeleteTemplate(
             session.handle, unit, ctypes.byref(identity), position
         )
@@ -501,12 +670,16 @@ def cmd_delete(position: int) -> int:
     return 0
 
 
-def cmd_probe() -> int:
+def cmd_probe(timeout: float = DEFAULT_TIMEOUT) -> int:
     """Report exactly what one touch produces - the setup and diagnosis tool."""
     with Session() as session:
-        print("Touch the reader ... (Ctrl+C to stop)\n")
+        print("Touch the reader ... (Ctrl+C to stop)")
+        print()
         while True:
-            outcome = session.identify()
+            outcome = session.identify(timeout)
+            if outcome is None:
+                print(f"  ... nothing in {timeout:.0f}s, still listening")
+                continue
             if isinstance(outcome, int):
                 print(f"  no result: {hresult_text(outcome)}")
                 time.sleep(0.5)
@@ -518,18 +691,37 @@ def cmd_probe() -> int:
             time.sleep(0.8)
 
 
-def cmd_run(url: str, token: str, device_label: str, allowed_sid: str | None) -> int:
-    print(f"Posting to {url} as reader {device_label!r}.")
-    if allowed_sid:
-        print(f"Only accepting touches from Windows account {allowed_sid}.")
+def cmd_run(
+    url: str,
+    token: str,
+    device_label: str,
+    allowed_sid: str | None,
+    accounts: dict[str, str] | None = None,
+) -> int:
+    accounts = {sid.lower(): label for sid, label in (accounts or {}).items()}
+    if accounts:
+        # Ten fingers per Windows account is the hard ceiling, so a bigger
+        # workforce is spread over several accounts. Each account is given its
+        # own reader name, which keeps every (reader, position) pair unique.
+        print(f"Posting to {url}. Accounts mapped to reader names:")
+        for sid, label in accounts.items():
+            print(f"  {sid} -> {label!r}")
     else:
-        print("Accepting any enrolled Windows account (use --require-sid to restrict).")
+        print(f"Posting to {url} as reader {device_label!r}.")
+        if allowed_sid:
+            print(f"Only accepting touches from Windows account {allowed_sid}.")
+        else:
+            print("Accepting any enrolled Windows account (use --require-sid to restrict).")
     print()
 
     with Session() as session:
         print("Ready. Touch the reader to clock in or out. Ctrl+C to stop.\n")
         while True:
-            outcome = session.identify()
+            outcome = session.identify(30.0)
+            if outcome is None:
+                # Nobody has clocked for a while. Keep waiting, but round the
+                # loop, so Ctrl+C and a clean shutdown still work.
+                continue
             if isinstance(outcome, int):
                 if outcome in _FATAL_CODES:
                     # Retrying will never help, and a tight loop would bury the
@@ -542,19 +734,28 @@ def cmd_run(url: str, token: str, device_label: str, allowed_sid: str | None) ->
                 continue
 
             position, sid, _unit = outcome
-            if allowed_sid and sid.lower() != allowed_sid.lower():
-                # Another Windows account on this PC also has Hello set up. Its
-                # fingers must not clock anybody, or an IT login would clock in
-                # whoever happens to be registered at that position.
-                print(f"  ignored: position {position} belongs to account {sid}")
-                continue
+            if accounts:
+                reader = accounts.get(sid.lower())
+                if reader is None:
+                    # An account nobody mapped - an IT login, say. Its fingers
+                    # must not clock whoever holds that position.
+                    print(f"  ignored: position {position} belongs to unmapped {sid}")
+                    continue
+            else:
+                if allowed_sid and sid.lower() != allowed_sid.lower():
+                    # Another Windows account on this PC also has Hello set up.
+                    # Its fingers must not clock anybody.
+                    print(f"  ignored: position {position} belongs to account {sid}")
+                    continue
+                reader = device_label
 
             name = FINGER_POSITIONS.get(position, f"position {position}")
-            reply = post_scan(url, token, position, device_label)
+            reply = post_scan(url, token, position, reader)
             if reply.get("ok"):
                 who = (reply.get("employee") or {}).get("name", "?")
                 state = "recorded" if reply.get("recorded") else "ignored (too soon)"
-                print(f"  {name}: {who} - {reply.get('direction')} {state}")
+                where = f" [{reader}]" if accounts else ""
+                print(f"  {name}{where}: {who} - {reply.get('direction')} {state}")
             else:
                 print(f"  {name}: REFUSED [{reply.get('code')}] {reply.get('message')}")
             time.sleep(0.8)
@@ -585,10 +786,31 @@ def main() -> int:
     )
     parser.add_argument("--token", help="Kiosk token (defaults to KIOSK_TOKEN in .env).")
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="Seconds to wait for a finger before reporting (default 30).",
+    )
+    parser.add_argument(
         "--require-sid",
         help="Only accept touches from this Windows account SID (see --probe).",
     )
+    parser.add_argument(
+        "--account",
+        action="append",
+        metavar="SID=READER",
+        help="Map a Windows account SID to a reader name. Repeat once per "
+        "account to cover more than ten people; any account not listed is "
+        "ignored. Get the SIDs from --probe.",
+    )
     args = parser.parse_args()
+
+    # Progress must appear as it happens, not when the buffer fills: this tool
+    # is watched while somebody presses a finger on a reader.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:  # pragma: no cover - very old Python
+        pass
 
     try:
         if args.check:
@@ -596,11 +818,11 @@ def main() -> int:
         if args.list:
             return cmd_list()
         if args.enrol is not None:
-            return cmd_enrol(args.enrol)
+            return cmd_enrol(args.enrol, args.timeout)
         if args.delete is not None:
             return cmd_delete(args.delete)
         if args.probe:
-            return cmd_probe()
+            return cmd_probe(args.timeout)
 
         try:
             from dotenv import load_dotenv
@@ -613,7 +835,19 @@ def main() -> int:
             raise SystemExit(
                 "No kiosk token. Set KIOSK_TOKEN in .env, or pass --token."
             )
-        return cmd_run(args.url, token, args.device_label, args.require_sid)
+        accounts: dict[str, str] = {}
+        for pair in args.account or []:
+            if "=" not in pair:
+                raise SystemExit(
+                    f"--account needs the form SID=READER, got {pair!r}"
+                )
+            sid, label = pair.split("=", 1)
+            if not sid.strip() or not label.strip():
+                raise SystemExit(f"--account needs both parts, got {pair!r}")
+            accounts[sid.strip()] = label.strip()
+        return cmd_run(
+            args.url, token, args.device_label, args.require_sid, accounts
+        )
     except KeyboardInterrupt:
         print("\nStopped.")
         return 0

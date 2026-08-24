@@ -371,6 +371,19 @@ def employee_fingerprint_add(employee_id: int):
     return redirect(url_for("admin.employee_detail", employee_id=employee.id))
 
 
+@bp.post("/employees/<int:employee_id>/fingerprint-templates/delete")
+def employee_fingerprint_templates_clear(employee_id: int):
+    """Delete an employee's stored fingerprint templates (biometric data)."""
+    from ..services.fingerprint import remove_templates
+
+    employee = db.get_or_404(Employee, employee_id)
+    removed = remove_templates(employee)
+    flash(
+        f"Removed {removed} fingerprint sample(s) for {employee.full_name}.", "success"
+    )
+    return redirect(url_for("admin.employee_detail", employee_id=employee.id))
+
+
 @bp.post("/fingerprints/<int:credential_id>/delete")
 def fingerprint_delete(credential_id: int):
     """Unregister a slot. The fingerprint itself is cleared on the reader."""

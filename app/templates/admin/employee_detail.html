@@ -72,6 +72,21 @@
     <p class="mf-empty">No fingerprint registered. {{ employee.first_name }} can still clock in by face.</p>
     {% endif %}
 
+    {% if employee.fingerprint_templates %}
+    <p class="mf-note" style="margin-top: 1rem;">
+        <strong>{{ employee.fingerprint_templates | length }} fingerprint sample(s) stored</strong>
+        for the desktop reader
+        ({{ employee.fingerprint_templates | map(attribute='position_name') | select | unique | join(', ') or 'finger not recorded' }}).
+        This is biometric data held in the database.
+    </p>
+    <form method="post"
+          action="{{ url_for('admin.employee_fingerprint_templates_clear', employee_id=employee.id) }}"
+          onsubmit="return confirm('Delete all stored fingerprint data for {{ employee.full_name }}?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="mf-btn mf-btn-danger" type="submit">Remove fingerprint data</button>
+    </form>
+    {% endif %}
+
     <form method="post" action="{{ url_for('admin.employee_fingerprint_add', employee_id=employee.id) }}"
           class="mf-filter-row" style="margin-top: 1rem;">
         {{ finger_form.csrf_token }}

@@ -58,6 +58,17 @@ class Config:
     FACE_RECOGNISER_MODEL = MODEL_DIR / "face_recognition_sface_2021dec.onnx"
 
     # --- Recognition tuning ----------------------------------------------
+    # --- fingerprint readers that hand back a template for us to match ----
+    # "simulator" needs no hardware and is what the test suite uses. Set this to
+    # the vendor driver once the reader is on the desk.
+    FINGERPRINT_DRIVER = os.getenv("FINGERPRINT_DRIVER", "simulator")
+    # Scores run 0..1. As with faces, a match must clear the threshold *and*
+    # beat the runner-up by the margin, so two similar fingers refuse rather
+    # than guess - clocking the wrong person is worse than asking again.
+    FINGERPRINT_MATCH_THRESHOLD = _float("FINGERPRINT_MATCH_THRESHOLD", 0.60)
+    FINGERPRINT_MATCH_MARGIN = _float("FINGERPRINT_MATCH_MARGIN", 0.05)
+    FINGERPRINT_ENROL_SAMPLES = _int("FINGERPRINT_ENROL_SAMPLES", 3)
+
     FACE_MATCH_THRESHOLD = _float("FACE_MATCH_THRESHOLD", 0.40)
     FACE_MATCH_MARGIN = _float("FACE_MATCH_MARGIN", 0.05)
     # 55px is evidence-based, not a guess: measured on real photos, a face is

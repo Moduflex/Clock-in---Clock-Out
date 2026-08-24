@@ -487,6 +487,82 @@ def api_fingerprint():
     return jsonify(**_result_payload(employee, result, None))
 
 
+@bp.post("/api/kiosk/fingerprint/verify")
+@csrf.exempt
+@require_kiosk_token
+@rate_limit("kiosk_finger", "RECOGNISE_RATE_LIMIT", "RECOGNISE_RATE_WINDOW")
+def api_fingerprint_verify():
+    """Clock somebody from a captured fingerprint template.
+
+    Expects JSON ``{"template": "<base64>", "direction": null}``.
+
+    For readers that hand back a template rather than a slot number. Matching
+    happens here, server-side, for the same reason the hands-free path signs its
+    tokens: the caller supplies a fingerprint, never an employee id, so holding
+    the kiosk secret does not let anything clock an arbitrary person. It also
+    keeps the enrolled templates on the server instead of copying them out to
+    every kiosk.
+    """
+    from ..services.fingerprint import FingerprintError, decode_template, identify
+
+    payload = request.get_json(silent=True) or {}
+
+    direction = payload.get("direction")
+    if direction is not None and direction not in DIRECTIONS:
+        return jsonify(ok=False, code="bad_request", message="Unknown direction."), 400
+
+    raw = payload.get("template")
+    if not isinstance(raw, str) or not raw:
+        return (
+            jsonify(ok=False, code="bad_request", message="No fingerprint supplied."),
+            400,
+        )
+
+    try:
+        probe = decode_template(raw)
+        outcome = identify(probe)
+    except FingerprintError as exc:
+        return jsonify(ok=False, code=exc.code, message=exc.message), 400
+
+    if not outcome.accepted:
+        # Logged with the reason: a run of "ambiguous" means two people are
+        # enrolled too similarly, which is a setup problem, not a user error.
+        current_app.logger.info(
+            "Fingerprint refused: %s (best %.3f, runner-up %.3f)",
+            outcome.reason,
+            outcome.score,
+            outcome.runner_up_score,
+        )
+        messages = {
+            "no_templates": "No fingerprints are enrolled yet. Please see the office.",
+            "below_threshold": "Fingerprint not recognised. Please try again.",
+            "ambiguous": "That reading was unclear. Please try again.",
+        }
+        return jsonify(
+            ok=False,
+            code=outcome.reason,
+            message=messages.get(outcome.reason, "Fingerprint not recognised."),
+        )
+
+    employee = db.session.get(Employee, outcome.employee_id)
+    if employee is None or not employee.is_active:
+        return jsonify(
+            ok=False,
+            code="employee_inactive",
+            message="That record is not active. Please see the office.",
+        )
+
+    result = attendance.record_clock(
+        employee,
+        direction=direction,
+        confidence=round(outcome.score, 4),
+        method=METHOD_FINGER,
+        device_label=current_app.config["KIOSK_DEVICE_LABEL"],
+        cooldown_seconds=current_app.config["CLOCK_COOLDOWN_SECONDS"],
+    )
+    return jsonify(**_result_payload(employee, result, outcome.score))
+
+
 @bp.get("/api/kiosk/onsite")
 @require_kiosk_token
 def api_onsite():

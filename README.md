@@ -89,6 +89,83 @@ on the reader.
 In production, run it as a Windows scheduled task set to "run at startup". It
 reads `KIOSK_TOKEN` from `.env`, the same secret the kiosk page uses.
 
+### Desktop USB readers with an SDK (recommended)
+
+A ZKTeco ZK9500 or DigitalPersona U.are.U plugs into a USB port and comes with a
+documented SDK. These are the standard choice for time-and-attendance on a PC,
+and they avoid every limitation of a Windows Hello dongle: no Windows account
+involvement, no ten-person ceiling, no shared login, no elevation.
+
+The reader hands back a **template** and matching happens in our code, so unlike
+every other option here the fingerprint data really is stored in your database.
+That is a deliberate trade for capability, and it has consequences:
+
+- `fingerprint_template` rows are biometric data at rest, the same category as
+  the face templates. They belong in the same DPIA, and the database backups
+  need the same care.
+- Deleting an employee removes their templates (cascade), and
+  `--remove PAYROLL_REF` or the **Remove fingerprint data** button on their page
+  does it without deleting the person - which is what an erasure request needs.
+- Templates are **not portable between vendors**. Each row records which SDK
+  produced it and the matcher only ever compares like with like, so swapping
+  reader means re-enrolling rather than silently mismatching.
+
+**Matching policy.** A probe is scored against every enrolled template; each
+employee keeps their best score. A match must clear `FINGERPRINT_MATCH_THRESHOLD`
+*and* beat the runner-up by `FINGERPRINT_MATCH_MARGIN`. Two people the reader
+cannot tell apart therefore get a refusal and a retry, never a guess - clocking
+the wrong person puts a wrong figure into somebody's pay. Enrolment applies the
+same test in reverse and refuses a finger already enrolled to somebody else.
+
+**Setting up**
+
+```bash
+# Rehearse the whole flow with no hardware at all: typing a name stands in
+# for pressing a finger. FINGERPRINT_DRIVER=simulator is the default.
+python scripts/usb_fingerprint.py --enrol E001 --position 2
+python scripts/usb_fingerprint.py --verify
+python scripts/usb_fingerprint.py --list
+```
+
+With the real reader:
+
+1. Install the vendor SDK. For ZKTeco, set `FINGERPRINT_SDK_PATH` in `.env` to
+   the folder holding `libzkfp.dll`, and `FINGERPRINT_DRIVER=zkfinger`.
+2. **Check the binding before anything else.** This captures the same finger
+   twice and then a different one, and prints the scores:
+
+   ```bash
+   python scripts/usb_fingerprint.py --selftest
+   ```
+
+   Set `FINGERPRINT_MATCH_THRESHOLD` comfortably between the two numbers it
+   reports. If the same finger does not score clearly higher than a different
+   one, do not go live - matching is not reliable yet.
+3. Enrol each person (three presses by default):
+
+   ```bash
+   python scripts/usb_fingerprint.py --enrol E001 --position 2
+   ```
+
+4. Run the kiosk loop:
+
+   ```bash
+   python scripts/usb_fingerprint.py --run
+   ```
+
+Matching happens **server-side**: the agent posts the captured template to
+`/api/kiosk/fingerprint/verify` and the app decides who it is. So a caller
+holding the kiosk token supplies a fingerprint, never an employee id, and the
+enrolled templates never leave the server.
+
+**A note on the SDK binding.** `app/services/fingerprint_sdk.py` is written
+against the documented ZKFinger entry points but was never run against hardware,
+so treat it as a draft to verify: check the DLL name, the calling convention and
+the buffer sizes against the SDK version you download. `--selftest` exists to
+make that quick. The DigitalPersona binding is deliberately *not* written - that
+SDK is reached through .NET or COM rather than a flat C DLL, and guessing would
+be worse than useless.
+
 ### Windows Hello readers
 
 A consumer Windows Hello dongle has no slot numbers of its own - it enrols
@@ -104,11 +181,65 @@ position is the identity:
 The position number is posted as the `finger_id`, so registration and clocking
 work exactly as they do for a slot-based reader.
 
+#### Step 0: the driver (do this first)
+
+A Hello dongle is a vendor-class USB device and is useless until its driver is
+installed. If Device Manager shows it with a warning triangle, or
+
+```powershell
+Get-PnpDevice | Where-Object { $_.FriendlyName -match 'finger' }
+```
+
+reports `Error` / `The drivers for this device are not installed. (Code 28)`,
+then nothing else in this section will work yet. Windows Update does **not**
+reliably offer these drivers, because they are published against particular OEM
+machines rather than against the USB hardware ID.
+
+Find the right driver by hardware ID (`USB\VID_347D&PID_0302` for a
+BLESTECH/Betterlife sensor) in **Microsoft's Update Catalog** at
+<https://www.catalog.update.microsoft.com>, then check before installing:
+
+- the INF's `[Version]` section says `Class=Biometric`;
+- the INF actually lists your hardware ID;
+- the `.cat` file's signature is *Valid* and signed by "Microsoft Windows
+  Hardware Compatibility Publisher".
+
+Install it from an **administrator** PowerShell:
+
+```powershell
+pnputil /add-driver .\BetterlifeFingerprintDevice.inf /install
+pnputil /scan-devices
+```
+
+Use the Microsoft catalogue, not a third-party "driver download" site - those
+repackage kernel drivers and are a known malware route onto a work machine.
+
+Confirm the framework can now see a sensor:
+
+```powershell
+.venv\Scripts\python.exe scripts\windows_hello_reader.py --check
+```
+
+Note that `--check` opening the pool is necessary but not sufficient: the system
+pool opens even with no reader attached. `--list` or `--probe` is what proves a
+sensor is really there.
+
 **Two limits to plan around**, both inherent to the hardware:
 
-- **Ten people per Windows account**, because there are ten fingers. Beyond
-  that, put the remaining staff on face recognition, or add a second Windows
-  account (see `--require-sid`).
+- **Ten people per Windows account**, because there are ten fingers. For a
+  bigger workforce, create a second locked-down local Windows account, enrol ten
+  more fingers while signed in as it, and give each account its own reader name:
+
+  ```powershell
+  python scripts\windows_hello_reader.py --run ^
+      --account "S-1-5-21-...-1001=Kiosk account A" ^
+      --account "S-1-5-21-...-1002=Kiosk account B"
+  ```
+
+  Each account gets its own reader name, so "position 2" means a different
+  person on each - the `(reader, slot)` pair stays unique. Any account not
+  listed is ignored, which is what stops an IT login clocking somebody in.
+
 - **Everyone enrolled can also sign into that Windows account.** Windows cannot
   separate "may clock in" from "may log in" here. So the kiosk must run on a
   locked-down local account with no access to anything - which is good practice
@@ -117,28 +248,52 @@ work exactly as they do for a slot-based reader.
 Neither applies to a slot-based reader, which is why one is still the better buy
 if you have the choice.
 
-**Setting it up**, in order:
+**Setting it up.** First confirm a sensor is actually there - this reports the
+units the framework can see, and needs nobody to touch anything:
 
 ```bash
-# 1. Is the reader reachable through the framework at all?
 python scripts/windows_hello_reader.py --check
+```
 
-# 2. Enrol each person at their own finger position (1-10). Do this signed in
-#    as the kiosk Windows account - that is the account the finger belongs to.
-python scripts/windows_hello_reader.py --enrol 2      # Alice, right index
-python scripts/windows_hello_reader.py --enrol 7      # Bob, left index
+If it says `Sensors the framework can see: 0`, stop and do Step 0 above; nothing
+else will work. There are then two ways to enrol, and the first is the one to
+reach for.
 
-# 3. Check what is enrolled and which positions are free.
-python scripts/windows_hello_reader.py --list
+*Route A - enrol through Windows, then read the positions back.* This uses the
+supported Windows path, so it works even where a driver does not implement
+programmatic enrolment (the Betterlife one does not implement everything).
 
-# 4. Register the matching slot number against each person in the back office.
+1. Sign in as the kiosk Windows account and go to **Settings > Accounts >
+   Sign-in options > Fingerprint recognition**. Add one finger per person, up to
+   ten. Windows does not ask which finger it is, which is what step 2 is for.
+2. Run `--probe` and have each person touch the reader in turn. It prints the
+   position number their finger actually reports:
 
-# 5. Confirm a touch reports the position you expect, and note the account SID.
-python scripts/windows_hello_reader.py --probe
+   ```
+   position 2 (Right index)  unit 4  account S-1-5-21-...
+     -> would post finger_id=2
+   ```
 
-# 6. Run the clocking loop (as administrator - see below).
+3. Register that number against that person in the back office, and note the
+   account SID for `--require-sid`.
+
+*Route B - enrol at a chosen position.* Gives deterministic position numbers
+rather than discovering them, if the driver supports it:
+
+```bash
+python scripts/windows_hello_reader.py --enrol 2      # right index
+```
+
+Then run the clocking loop:
+
+```bash
 python scripts/windows_hello_reader.py --run --require-sid S-1-5-21-...
 ```
+
+`--list` shows what a Windows account has enrolled, but only on drivers that
+implement enrolment enumeration. On the Betterlife reader it reports
+`0x80098003` and points you at Settings and `--probe` instead; that is a missing
+convenience, not a fault in the reader.
 
 `--run` may need to run **as administrator**: identifying fingers belonging to
 a *different* Windows account is privileged. Run the agent as the same kiosk
