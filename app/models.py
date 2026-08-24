@@ -42,6 +42,9 @@ METHOD_FACE = "face"
 # payroll query can tell a deliberate scan from an automatic one.
 METHOD_AUTO = "auto"
 METHOD_MANUAL = "manual"
+# Recorded by a fingerprint reader. The reader matches the finger itself and
+# reports which of its own slots matched; see FingerprintCredential.
+METHOD_FINGER = "finger"
 
 
 def utcnow() -> dt.datetime:
@@ -114,6 +117,9 @@ class Employee(db.Model):
         back_populates="employee", cascade="all, delete-orphan", lazy="select"
     )
     shift_pattern: Mapped[ShiftPattern | None] = relationship(back_populates="employees")
+    fingerprints: Mapped[list["FingerprintCredential"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan", lazy="selectin"
+    )
 
     @property
     def full_name(self) -> str:
@@ -194,6 +200,73 @@ class FaceTemplate(db.Model):
         import numpy as np
 
         return np.ascontiguousarray(vector, dtype=np.float32).tobytes()
+
+
+# Finger positions as the Windows Biometric Framework numbers them (ANSI 381).
+# A Windows Hello reader has no slots of its own: the finger *position* is the
+# identity, so on that hardware these ten values are the whole identity space
+# available on one Windows account. A slot-based reader ignores this and just
+# counts from 1, which is why finger_id is a plain integer rather than an enum.
+FINGER_POSITIONS = {
+    1: "Right thumb",
+    2: "Right index",
+    3: "Right middle",
+    4: "Right ring",
+    5: "Right little",
+    6: "Left thumb",
+    7: "Left index",
+    8: "Left middle",
+    9: "Left ring",
+    10: "Left little",
+}
+
+
+class FingerprintCredential(db.Model):
+    """Links one slot on a fingerprint reader to an employee.
+
+    **No biometric data is stored here.** A reader of the supported kind holds
+    the fingerprint in its own memory, matches the finger on the device, and
+    reports back only which of its numbered slots matched. All this table keeps
+    is "slot 7 on the workshop reader is Bob" - a reference, not a fingerprint.
+
+    That is a deliberate choice rather than an accident of the hardware: a
+    fingerprint that never reaches the database cannot leak from a database
+    backup, and it keeps the amount of special category data held to a minimum.
+    """
+
+    __tablename__ = "fingerprint_credential"
+    __table_args__ = (
+        # One slot on one reader identifies exactly one person. Without this a
+        # mis-typed slot number could silently clock in the wrong employee.
+        UniqueConstraint("device_label", "finger_id", name="uq_fingerprint_device_slot"),
+        Index("ix_fingerprint_lookup", "device_label", "finger_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Which reader this slot belongs to: two readers each have a slot 7.
+    device_label: Mapped[str] = mapped_column(String(64), nullable=False)
+    finger_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Free text for whoever maintains it, e.g. "right index".
+    label: Mapped[str | None] = mapped_column(String(64))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_user.id", ondelete="SET NULL")
+    )
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+    employee: Mapped[Employee] = relationship(back_populates="fingerprints")
+
+    @property
+    def position_name(self) -> str | None:
+        """The finger this slot means, on a reader where slots are positions."""
+        return FINGER_POSITIONS.get(self.finger_id)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<FingerprintCredential {self.device_label}#{self.finger_id} -> {self.employee_id}>"
 
 
 class AttendanceEvent(db.Model):

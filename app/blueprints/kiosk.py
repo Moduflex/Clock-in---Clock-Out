@@ -29,7 +29,14 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from ..extensions import csrf, db
-from ..models import DIRECTIONS, METHOD_AUTO, METHOD_FACE, Employee, utcnow
+from ..models import (
+    DIRECTIONS,
+    METHOD_AUTO,
+    METHOD_FACE,
+    METHOD_FINGER,
+    Employee,
+    utcnow,
+)
 from ..security import rate_limit, require_kiosk_token
 from ..services import attendance
 from ..services.recognition import scan
@@ -203,13 +210,13 @@ def _identify(frames, *, automatic: bool):
     return employee, score, None
 
 
-def _result_payload(employee: Employee, result, score: float) -> dict:
+def _result_payload(employee: Employee, result, score: float | None) -> dict:
     tz = get_timezone(current_app.config["TIMEZONE"])
     current_app.logger.info(
-        "%s %s (%.3f) recorded=%s method=%s",
+        "%s %s (%s) recorded=%s method=%s",
         employee.payroll_ref,
         result.direction,
-        score,
+        f"{score:.3f}" if score is not None else "no score",
         result.recorded,
         result.event.method if result.event else "-",
     )
@@ -222,7 +229,7 @@ def _result_payload(employee: Employee, result, score: float) -> dict:
         "recorded": result.recorded,
         "occurred_at": to_local(result.occurred_at, tz).strftime("%H:%M:%S"),
         "occurred_on": to_local(result.occurred_at, tz).strftime("%A %d %B %Y"),
-        "confidence": round(score, 4),
+        "confidence": round(score, 4) if score is not None else None,
         "next_direction": attendance.next_direction(employee.id),
     }
 
@@ -405,6 +412,79 @@ def api_commit():
         automatic=True,
     )
     return jsonify(**_result_payload(employee, result, score))
+
+
+# --------------------------------------------------------------------------
+# Fingerprint clocking
+# --------------------------------------------------------------------------
+@bp.post("/api/kiosk/fingerprint")
+@csrf.exempt
+@require_kiosk_token
+@rate_limit("kiosk_finger", "RECOGNISE_RATE_LIMIT", "RECOGNISE_RATE_WINDOW")
+def api_fingerprint():
+    """Record a clock event from a fingerprint reader.
+
+    Expects JSON ``{"finger_id": 7, "device_label": "Workshop reader",
+    "direction": null}``.
+
+    The reader has already matched the finger against its own memory, so
+    *finger_id* is the slot number that matched - never a fingerprint, an image
+    or a template. Resolving that slot to a person happens here, server-side,
+    for the same reason the hands-free path signs its tokens: a caller holding
+    the kiosk secret must not be able to name which employee to clock.
+    """
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        finger_id = int(payload.get("finger_id"))
+    except (TypeError, ValueError):
+        return (
+            jsonify(ok=False, code="bad_request", message="No fingerprint id supplied."),
+            400,
+        )
+
+    direction = payload.get("direction")
+    if direction is not None and direction not in DIRECTIONS:
+        return jsonify(ok=False, code="bad_request", message="Unknown direction."), 400
+
+    device_label = str(
+        payload.get("device_label") or current_app.config["KIOSK_DEVICE_LABEL"]
+    )[:64]
+
+    credential = attendance.find_fingerprint(device_label, finger_id)
+    if credential is None:
+        # Logged, because a run of these means a reader was re-enrolled without
+        # the office being told - not something to leave to guesswork.
+        current_app.logger.info(
+            "Unregistered fingerprint slot %s on %r", finger_id, device_label
+        )
+        return jsonify(
+            ok=False,
+            code="finger_unknown",
+            message="That finger is not registered. Please see the office.",
+        )
+
+    employee = credential.employee
+    if not employee.is_active:
+        return jsonify(
+            ok=False,
+            code="employee_inactive",
+            message="That record is not active. Please see the office.",
+        )
+
+    result = attendance.record_clock(
+        employee,
+        direction=direction,
+        method=METHOD_FINGER,
+        device_label=device_label,
+        cooldown_seconds=current_app.config["CLOCK_COOLDOWN_SECONDS"],
+        commit=False,
+    )
+    credential.last_used_at = utcnow()
+    db.session.commit()
+
+    # No confidence figure: the device reported a match, not a similarity.
+    return jsonify(**_result_payload(employee, result, None))
 
 
 @bp.get("/api/kiosk/onsite")

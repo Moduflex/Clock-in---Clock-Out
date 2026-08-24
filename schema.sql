@@ -69,6 +69,26 @@ CREATE TABLE attendance_event (
 CREATE INDEX ix_attendance_employee_time ON attendance_event (employee_id, occurred_at);
 CREATE INDEX ix_attendance_event_occurred_at ON attendance_event (occurred_at);
 
+CREATE TABLE fingerprint_credential (
+	id INTEGER NOT NULL AUTO_INCREMENT,
+	employee_id INTEGER NOT NULL,
+	device_label VARCHAR(64) NOT NULL,
+	finger_id INTEGER NOT NULL,
+	label VARCHAR(64),
+	is_active BOOL NOT NULL,
+	created_at DATETIME NOT NULL,
+	created_by_id INTEGER,
+	last_used_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_fingerprint_device_slot UNIQUE (device_label, finger_id),
+	FOREIGN KEY(employee_id) REFERENCES employee (id) ON DELETE CASCADE,
+	FOREIGN KEY(created_by_id) REFERENCES admin_user (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Holds no biometric data: only which slot on which reader belongs to whom.
+CREATE INDEX ix_fingerprint_credential_employee_id ON fingerprint_credential (employee_id);
+CREATE INDEX ix_fingerprint_lookup ON fingerprint_credential (device_label, finger_id);
+
 CREATE TABLE face_template (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	employee_id INTEGER NOT NULL, 

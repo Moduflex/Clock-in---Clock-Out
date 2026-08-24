@@ -27,6 +27,9 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Employees: add, edit, search, deactivate.
 - Enrolment: capture several face samples through the browser, with checks that
   they are all the same person and not somebody already enrolled.
+- Fingerprints: register which slot on which reader belongs to whom. The
+  reader keeps the fingerprint and does the matching; this system stores no
+  biometric data for fingerprints at all, only the slot number.
 - Timesheets: date range (defaults to the last four weeks), department and
   per-employee filters, clocked and paid hours per shift, day-by-day drill-down
   per person, and two CSV exports — a one-line-per-person master sheet for
@@ -38,6 +41,127 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Manual entry and voiding for corrections — both fully audited.
 - Camera check: measures what your camera actually produces so the recognition
   thresholds can be set from real numbers rather than guesses.
+
+---
+
+## Fingerprint clocking
+
+An alternative to the camera, useful where a face scan is awkward - gloves off
+but hands dirty, or a doorway with poor light.
+
+**How it is wired.** The reader stores and matches fingerprints in its own
+memory and reports only *which of its numbered slots* matched. A small agent on
+the kiosk machine forwards that slot number to `/api/kiosk/fingerprint`, which
+looks up whose slot it is and records the clock event through exactly the same
+alternation and cooldown rules as a face scan.
+
+    reader --> scripts/fingerprint_reader.py --> POST /api/kiosk/fingerprint
+                                                 { "finger_id": 7 }
+
+**No fingerprint is ever stored by this system.** The `fingerprint_credential`
+table holds "slot 7 on the workshop reader is Bob" and nothing else. A
+fingerprint that never reaches the database cannot leak from a database backup,
+and it keeps the amount of special category data held to a minimum. The
+trade-off is that the reader becomes the system of record for the fingerprint
+itself: removing somebody means unregistering the slot here **and** deleting it
+on the reader.
+
+**Setting somebody up**
+
+1. Enrol the finger on the reader, following its own instructions. Note the slot
+   number it reports.
+2. Open that person in the back office and, under Fingerprints, enter the slot
+   number and the reader name. The reader name must match the agent's
+   `--device-label` (default: `KIOSK_DEVICE_LABEL` from `.env`).
+3. Test it.
+
+**Running the agent**
+
+    # No hardware needed: type slot numbers to test the whole path.
+    python scripts/fingerprint_reader.py --simulate
+
+    # A reader that prints the matched slot number as a line of text.
+    python scripts/fingerprint_reader.py --serial COM3
+
+    # An R307 / ZFM-20 / FPM10A module over serial (needs pyserial).
+    python scripts/fingerprint_reader.py --r307 COM3
+
+In production, run it as a Windows scheduled task set to "run at startup". It
+reads `KIOSK_TOKEN` from `.env`, the same secret the kiosk page uses.
+
+### Windows Hello readers
+
+A consumer Windows Hello dongle has no slot numbers of its own - it enrols
+fingerprints against a *Windows user account*. What makes multi-person clocking
+work anyway is that the Windows Biometric Framework records **which finger
+position** each enrolment used, and reports that position back on every match.
+So one kiosk Windows account holds up to ten enrolments, one per finger, and the
+position is the identity:
+
+    position 2 (right index)  -> Alice Turner
+    position 7 (left index)   -> Bob Ward
+
+The position number is posted as the `finger_id`, so registration and clocking
+work exactly as they do for a slot-based reader.
+
+**Two limits to plan around**, both inherent to the hardware:
+
+- **Ten people per Windows account**, because there are ten fingers. Beyond
+  that, put the remaining staff on face recognition, or add a second Windows
+  account (see `--require-sid`).
+- **Everyone enrolled can also sign into that Windows account.** Windows cannot
+  separate "may clock in" from "may log in" here. So the kiosk must run on a
+  locked-down local account with no access to anything - which is good practice
+  for a shop-floor machine regardless.
+
+Neither applies to a slot-based reader, which is why one is still the better buy
+if you have the choice.
+
+**Setting it up**, in order:
+
+```bash
+# 1. Is the reader reachable through the framework at all?
+python scripts/windows_hello_reader.py --check
+
+# 2. Enrol each person at their own finger position (1-10). Do this signed in
+#    as the kiosk Windows account - that is the account the finger belongs to.
+python scripts/windows_hello_reader.py --enrol 2      # Alice, right index
+python scripts/windows_hello_reader.py --enrol 7      # Bob, left index
+
+# 3. Check what is enrolled and which positions are free.
+python scripts/windows_hello_reader.py --list
+
+# 4. Register the matching slot number against each person in the back office.
+
+# 5. Confirm a touch reports the position you expect, and note the account SID.
+python scripts/windows_hello_reader.py --probe
+
+# 6. Run the clocking loop (as administrator - see below).
+python scripts/windows_hello_reader.py --run --require-sid S-1-5-21-...
+```
+
+`--run` may need to run **as administrator**: identifying fingers belonging to
+a *different* Windows account is privileged. Run the agent as the same kiosk
+account the fingers were enrolled on and it will usually work unelevated - try
+it first, and only tick "run with highest privileges" on the scheduled task if
+it reports access denied.
+
+`--require-sid` is worth setting. Without it, any Windows account on the machine
+that has Hello configured can clock somebody - so an IT administrator signing in
+with their own fingerprint at position 2 would clock in whoever is registered
+against position 2. `--probe` prints the SID to use.
+
+When somebody leaves, `--delete POS` removes the enrolment from Windows, and
+unregistering the slot in the back office removes the mapping. Both are needed.
+
+**If `--check` fails** with access denied, run it as administrator. If it
+reports biometrics disabled, Enhanced Sign-in Security may be blocking
+third-party access to the sensor; that is a per-device Windows setting, and
+without it a Hello dongle cannot be used for clocking at all.
+
+**Better hardware, if you get the choice.** A reader that matches on-device and
+reports a slot number (R307 and similar, around £15) has neither the ten-person
+limit nor the shared-login problem, and needs no elevation.
 
 ---
 
@@ -626,6 +750,7 @@ already states intent.
 | `app/services/attendance.py` | Alternation and cooldown rules. |
 | `app/services/enrolment.py` | Enrolment with same-person and duplicate checks. |
 | `app/services/timesheet.py` | Pairing events into shifts, totals, CSV, timezones. |
+| `scripts/fingerprint_reader.py` | Agent that reads a fingerprint reader and posts matches. |
 | `app/blueprints/` | Kiosk, auth and admin routes. |
 | `app/security.py` | Rate limiting and the kiosk shared secret. |
 

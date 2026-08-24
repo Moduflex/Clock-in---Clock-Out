@@ -34,8 +34,10 @@ from ..models import (
     DIRECTION_OUT,
     DIRECTIONS,
     METHOD_MANUAL,
+    FINGER_POSITIONS,
     AttendanceEvent,
     Employee,
+    FingerprintCredential,
     ShiftPattern,
     visible_employee_clause,
 )
@@ -106,6 +108,24 @@ class ManualEventForm(FlaskForm):
         "Date and time (local)", validators=[DataRequired(), Length(max=32)]
     )
     note = TextAreaField("Reason", validators=[DataRequired(), Length(max=500)])
+
+
+class FingerprintForm(FlaskForm):
+    """Registers a slot on a reader against an employee.
+
+    Enrolment itself happens on the reader, which keeps the fingerprint. This
+    form only records whose slot is whose, so there is no biometric data on it.
+    """
+
+    finger_id = IntegerField(
+        "Slot number on the reader",
+        validators=[
+            DataRequired(message="Enter the slot number the reader reported."),
+            NumberRange(min=0, max=65535, message="Between 0 and 65535."),
+        ],
+    )
+    device_label = StringField("Reader", validators=[DataRequired(), Length(max=64)])
+    label = StringField("Which finger (optional)", validators=[Optional(), Length(max=64)])
 
 
 class VoidForm(FlaskForm):
@@ -293,8 +313,79 @@ def employee_detail(employee_id: int):
         employee=employee,
         events=events,
         void_form=VoidForm(),
+        finger_form=FingerprintForm(
+            device_label=current_app.config["KIOSK_DEVICE_LABEL"]
+        ),
+        finger_positions=FINGER_POSITIONS,
         clocked_in=attendance.is_clocked_in(employee.id),
     )
+
+
+# --------------------------------------------------------------------------
+# Fingerprints
+# --------------------------------------------------------------------------
+@bp.post("/employees/<int:employee_id>/fingerprint")
+def employee_fingerprint_add(employee_id: int):
+    """Record which slot on the reader belongs to this employee."""
+    employee = db.get_or_404(Employee, employee_id)
+    form = FingerprintForm()
+    if not form.validate_on_submit():
+        for field in (form.finger_id, form.device_label):
+            for error in field.errors:
+                flash(error, "error")
+        return redirect(url_for("admin.employee_detail", employee_id=employee.id))
+
+    device_label = (form.device_label.data or "").strip()
+    finger_id = int(form.finger_id.data)
+
+    clash = db.session.scalars(
+        select(FingerprintCredential).where(
+            FingerprintCredential.device_label == device_label,
+            FingerprintCredential.finger_id == finger_id,
+        )
+    ).first()
+    if clash is not None:
+        # Naming the holder matters: the usual cause is re-using a slot that was
+        # never cleared, which would otherwise clock the wrong person.
+        flash(
+            f"Slot {finger_id} on {device_label!r} is already registered to "
+            f"{clash.employee.full_name}. Remove that one first, or use a free slot.",
+            "error",
+        )
+        return redirect(url_for("admin.employee_detail", employee_id=employee.id))
+
+    db.session.add(
+        FingerprintCredential(
+            employee_id=employee.id,
+            device_label=device_label,
+            finger_id=finger_id,
+            label=(form.label.data or "").strip() or None,
+            created_by_id=current_user.id,
+        )
+    )
+    db.session.commit()
+    flash(
+        f"Slot {finger_id} on {device_label!r} now clocks {employee.full_name}.",
+        "success",
+    )
+    return redirect(url_for("admin.employee_detail", employee_id=employee.id))
+
+
+@bp.post("/fingerprints/<int:credential_id>/delete")
+def fingerprint_delete(credential_id: int):
+    """Unregister a slot. The fingerprint itself is cleared on the reader."""
+    credential = db.get_or_404(FingerprintCredential, credential_id)
+    employee_id = credential.employee_id
+    name = credential.employee.full_name
+    device_label, finger_id = credential.device_label, credential.finger_id
+    db.session.delete(credential)
+    db.session.commit()
+    flash(
+        f"Slot {finger_id} on {device_label!r} no longer clocks {name}. "
+        "Delete the fingerprint on the reader itself as well.",
+        "success",
+    )
+    return redirect(url_for("admin.employee_detail", employee_id=employee_id))
 
 
 # --------------------------------------------------------------------------

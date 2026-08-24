@@ -27,6 +27,7 @@ from ..models import (
     METHOD_FACE,
     AttendanceEvent,
     Employee,
+    FingerprintCredential,
     utcnow,
     visible_employee_clause,
 )
@@ -179,6 +180,21 @@ def void_event(event: AttendanceEvent, *, admin_id: int, reason: str) -> None:
     stamp = f"Voided by admin {admin_id}: {reason}".strip()
     event.note = f"{event.note}\n{stamp}" if event.note else stamp
     db.session.commit()
+
+
+def find_fingerprint(device_label: str, finger_id: int) -> FingerprintCredential | None:
+    """The registered credential for one slot on one reader, if there is one.
+
+    Scoped to the device as well as the slot: two readers each have a slot 7,
+    and they belong to different people.
+    """
+    return db.session.scalars(
+        select(FingerprintCredential).where(
+            FingerprintCredential.device_label == device_label,
+            FingerprintCredential.finger_id == finger_id,
+            FingerprintCredential.is_active.is_(True),
+        )
+    ).first()
 
 
 def currently_on_site() -> list[Employee]:
