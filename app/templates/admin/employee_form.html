@@ -25,8 +25,15 @@
             {{ form.shift_pattern_id() }}
             {% for error in form.shift_pattern_id.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
         </div>
-        <p class="mf-note">"Default shift" follows whichever shift is marked as the default on the
-            <a href="{{ url_for('admin.shifts') }}">Shifts</a> page.</p>
+        <div class="mf-field">
+            {{ form.working_week_id.label }}
+            {{ form.working_week_id() }}
+            {% for error in form.working_week_id.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
+        </div>
+        <p class="mf-note">Both defaults follow whichever shift and standard week are marked as
+            default on the <a href="{{ url_for('admin.shifts') }}">Shifts and hours</a> page. The
+            standard week decides where overtime starts: hours worked beyond it in a
+            Monday&ndash;Sunday week are reported as overtime.</p>
 
         <div class="mf-field mf-checkbox">
             {{ form.is_active() }} {{ form.is_active.label }}

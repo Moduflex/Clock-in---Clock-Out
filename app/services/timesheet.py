@@ -13,11 +13,21 @@ running) nothing is invented and the hours are left blank for a human to settle.
 
 Paid hours are derived from actual hours by three rules, applied in this order:
 the worked period is clipped to the employee's shift band (clock in early, paid
-from the shift start; clock out late, paid to the shift end), the clipped times
-are snapped to the 15-minute pay grid (in rounds forward, out rounds back, so
-07:34 is paid from 07:45), and the shift's unpaid break is deducted - but only
-when the paid time is long enough to have contained the break. Actual
-times are always shown alongside so nothing is hidden from whoever runs payroll.
+from the shift start; clock out late, paid to the shift end *only* on a shift
+with ``pay_beyond_end`` turned off), the clipped times are snapped to the
+15-minute pay grid (in rounds forward, out rounds back, so 07:34 is paid from
+07:45), and the shift's unpaid break is deducted - but only when the paid time
+is long enough to have contained the break. Actual times are always shown
+alongside so nothing is hidden from whoever runs payroll.
+
+Paid hours are then split into standard and overtime, week by week. A week runs
+Monday to Sunday (``week_start``), which is the only sound basis for the split:
+overtime is earned against a contracted weekly figure, so a reporting period of
+four weeks must be settled as four separate weeks and not as one 160-hour lump.
+Each week's paid hours up to the employee's standard week count as standard and
+the remainder as overtime, so 65 paid hours on a 40-hour contract are 40
+standard and 25 overtime. Somebody with no standard week set has all their hours
+counted as standard - a missing contract must not silently create overtime.
 """
 
 from __future__ import annotations
@@ -37,10 +47,13 @@ from ..models import (
     AttendanceEvent,
     Employee,
     ShiftPattern,
+    WorkingWeek,
     visible_employee_clause,
 )
 
 PAY_INTERVAL = dt.timedelta(minutes=15)
+# Weeks run Monday to Sunday throughout: date.weekday() numbers Monday 0.
+WEEK_LENGTH = 7
 
 
 def get_timezone(name: str) -> ZoneInfo:
@@ -77,6 +90,36 @@ def local_range_bounds(
     return first, last
 
 
+def week_start(day: dt.date) -> dt.date:
+    """The Monday of the week containing *day*. Every week here is Monday-Sunday."""
+    return day - dt.timedelta(days=day.weekday())
+
+
+def week_end(day: dt.date) -> dt.date:
+    """The Sunday of the week containing *day*."""
+    return week_start(day) + dt.timedelta(days=WEEK_LENGTH - 1)
+
+
+def whole_weeks(start: dt.date, end: dt.date) -> tuple[dt.date, dt.date]:
+    """Widen a date range outwards to whole Monday-Sunday weeks."""
+    return week_start(start), week_end(end)
+
+
+def is_whole_weeks(start: dt.date, end: dt.date) -> bool:
+    """True when the range starts on a Monday and ends on a Sunday.
+
+    Worth checking before trusting an overtime figure: half a week compared
+    against a full week's contract understates the overtime earned in it.
+    """
+    return start.weekday() == 0 and end.weekday() == WEEK_LENGTH - 1
+
+
+def default_range(today: dt.date, weeks: int = 4) -> tuple[dt.date, dt.date]:
+    """The last *weeks* whole Monday-Sunday weeks, ending with this week."""
+    end = week_end(today)
+    return end - dt.timedelta(days=weeks * WEEK_LENGTH - 1), end
+
+
 def round_forward(moment: dt.datetime) -> dt.datetime:
     """Snap forward to the next pay-grid boundary (07:34 -> 07:45)."""
     anchor = moment.replace(minute=0, second=0, microsecond=0)
@@ -94,6 +137,35 @@ def get_default_pattern() -> ShiftPattern | None:
     return db.session.scalars(
         select(ShiftPattern).where(ShiftPattern.is_default.is_(True))
     ).first()
+
+
+def get_default_working_week() -> WorkingWeek | None:
+    """The standard week used by anyone not assigned one of their own."""
+    return db.session.scalars(
+        select(WorkingWeek).where(WorkingWeek.is_default.is_(True))
+    ).first()
+
+
+def standard_weekly_hours(
+    employee: Employee, default: WorkingWeek | None
+) -> float | None:
+    """The employee's contracted weekly hours, or None when none is set."""
+    week = employee.working_week or default
+    return float(week.hours) if week is not None else None
+
+
+def split_overtime(
+    paid_hours: float, standard: float | None
+) -> tuple[float, float]:
+    """Split one week's paid hours into (standard, overtime).
+
+    With no contracted week to measure against, everything counts as standard:
+    inventing overtime from a missing setting would inflate a wage bill.
+    """
+    if standard is None:
+        return round(paid_hours, 2), 0.0
+    worked_standard = min(paid_hours, standard)
+    return round(worked_standard, 2), round(max(0.0, paid_hours - standard), 2)
 
 
 @dataclass
@@ -119,6 +191,12 @@ class Shift:
     def date(self) -> dt.date | None:
         anchor = self.start_local or self.end_local
         return anchor.date() if anchor else None
+
+    @property
+    def week_start(self) -> dt.date | None:
+        """The Monday of the week this shift is credited to."""
+        day = self.date
+        return week_start(day) if day else None
 
     @property
     def is_complete(self) -> bool:
@@ -179,11 +257,17 @@ class Shift:
 
     @property
     def paid_end_local(self) -> dt.datetime | None:
+        """When pay stops.
+
+        Time worked past the shift end is paid by default and shows up as
+        overtime. A shift with ``pay_beyond_end`` turned off trims back to the
+        band end instead, for work where staying late is not authorised.
+        """
         end = self.effective_end_local
         if end is None:
             return None
         band = self._band()
-        if band:
+        if band and self.pattern is not None and not self.pattern.pay_beyond_end:
             end = min(end, band[1])
         return round_back(end)
 
@@ -333,6 +417,28 @@ def list_departments() -> list[str]:
 
 
 @dataclass
+class WeekTotal:
+    """One employee's Monday-Sunday week - the unit overtime is settled in."""
+
+    employee: Employee
+    start: dt.date
+    hours: float = 0.0
+    paid_hours: float = 0.0
+    standard_hours: float = 0.0
+    overtime_hours: float = 0.0
+    shifts: int = 0
+    issues: int = 0
+
+    @property
+    def end(self) -> dt.date:
+        return self.start + dt.timedelta(days=WEEK_LENGTH - 1)
+
+    @property
+    def label(self) -> str:
+        return f"{self.start.strftime('%d/%m')}-{self.end.strftime('%d/%m/%Y')}"
+
+
+@dataclass
 class EmployeeTotal:
     employee: Employee
     hours: float
@@ -340,31 +446,82 @@ class EmployeeTotal:
     shifts: int
     issues: int
     issue_details: list[str] = field(default_factory=list)
+    # Paid hours split against the contracted week, summed over whole weeks.
+    standard_hours: float = 0.0
+    overtime_hours: float = 0.0
+    # The contract the split was measured against; None when none is set.
+    standard_weekly_hours: float | None = None
+    weeks: list[WeekTotal] = field(default_factory=list)
 
 
 def summarise(shifts: list[Shift]) -> list[EmployeeTotal]:
-    """Total hours per employee, with the exact rows needing attention.
+    """Total hours per employee, split into standard and overtime week by week.
 
     Each detail names the day and what is wrong, so management can spot a
     discrepancy on the master sheet without opening every timesheet.
+
+    The standard/overtime split is worked out on each Monday-Sunday week in turn
+    and then added up. Doing it on the period total instead would let a quiet
+    week cancel out a busy one, and overtime already worked is not repayable.
     """
+    default_week = get_default_working_week()
     buckets: dict[int, EmployeeTotal] = {}
+    weeks: dict[tuple[int, dt.date], WeekTotal] = {}
+
     for shift in shifts:
         total = buckets.get(shift.employee.id)
         if total is None:
             total = EmployeeTotal(shift.employee, 0.0, 0.0, 0, 0)
+            total.standard_weekly_hours = standard_weekly_hours(
+                shift.employee, default_week
+            )
             buckets[shift.employee.id] = total
+
+        monday = shift.week_start
+        week = None
+        if monday is not None:
+            key = (shift.employee.id, monday)
+            week = weeks.get(key)
+            if week is None:
+                week = WeekTotal(shift.employee, monday)
+                weeks[key] = week
+
         if shift.hours is not None:
             total.hours = round(total.hours + shift.hours, 2)
             total.shifts += 1
+            if week is not None:
+                week.hours = round(week.hours + shift.hours, 2)
+                week.shifts += 1
         if shift.paid_hours is not None:
             total.paid_hours = round(total.paid_hours + shift.paid_hours, 2)
+            if week is not None:
+                week.paid_hours = round(week.paid_hours + shift.paid_hours, 2)
         if shift.issue:
             total.issues += 1
             day = shift.date.strftime("%a %d/%m") if shift.date else "unknown day"
             total.issue_details.append(f"{day}: {shift.display_issue}")
+            if week is not None:
+                week.issues += 1
+
+    for (employee_id, _), week in sorted(weeks.items(), key=lambda item: item[0]):
+        total = buckets[employee_id]
+        week.standard_hours, week.overtime_hours = split_overtime(
+            week.paid_hours, total.standard_weekly_hours
+        )
+        total.weeks.append(week)
+        total.standard_hours = round(total.standard_hours + week.standard_hours, 2)
+        total.overtime_hours = round(total.overtime_hours + week.overtime_hours, 2)
+
     return sorted(
         buckets.values(), key=lambda t: (t.employee.last_name, t.employee.first_name)
+    )
+
+
+def weekly_totals(totals: list[EmployeeTotal]) -> list[WeekTotal]:
+    """Every employee-week in one list, oldest week first then by surname."""
+    rows = [week for total in totals for week in total.weeks]
+    return sorted(
+        rows, key=lambda w: (w.start, w.employee.last_name, w.employee.first_name)
     )
 
 
@@ -378,6 +535,7 @@ def to_csv(shifts: list[Shift]) -> str:
             "Surname",
             "First name",
             "Department",
+            "Week beginning",
             "Date",
             "Clock in",
             "Clock out",
@@ -400,6 +558,7 @@ def to_csv(shifts: list[Shift]) -> str:
                 shift.employee.last_name,
                 shift.employee.first_name,
                 shift.employee.department or "",
+                shift.week_start.isoformat() if shift.week_start else "",
                 shift.date.isoformat() if shift.date else "",
                 start.strftime("%H:%M") if start else "",
                 end.strftime("%H:%M") if end else "",
@@ -415,10 +574,12 @@ def to_csv(shifts: list[Shift]) -> str:
 
 
 def to_master_csv(totals: list[EmployeeTotal]) -> str:
-    """One line per person with their total paid hours - the payroll master sheet.
+    """One line per person, paid hours split into standard and overtime.
 
     Deliberately terse: management scan this for anything that looks wrong, then
-    open that person's individual timesheet for the day-by-day detail.
+    open that person's individual timesheet for the day-by-day detail. The split
+    is the sum of each Monday-Sunday week's split, so it can be checked against
+    the weekly sheet line by line.
     """
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
@@ -429,8 +590,12 @@ def to_master_csv(totals: list[EmployeeTotal]) -> str:
             "First name",
             "Department",
             "Shift",
+            "Standard week (hours)",
+            "Weeks",
             "Clocked hours",
             "Paid hours",
+            "Standard hours",
+            "Overtime hours",
             "Rows needing attention",
         ]
     )
@@ -442,9 +607,67 @@ def to_master_csv(totals: list[EmployeeTotal]) -> str:
                 total.employee.first_name,
                 total.employee.department or "",
                 total.employee.shift_pattern.name if total.employee.shift_pattern else "",
+                f"{total.standard_weekly_hours:g}"
+                if total.standard_weekly_hours is not None
+                else "",
+                len(total.weeks),
                 f"{total.hours:.2f}",
                 f"{total.paid_hours:.2f}",
+                f"{total.standard_hours:.2f}",
+                f"{total.overtime_hours:.2f}",
                 "; ".join(total.issue_details),
             ]
         )
+    return buffer.getvalue()
+
+
+def to_weekly_csv(totals: list[EmployeeTotal]) -> str:
+    """One line per person per Monday-Sunday week - where overtime is decided.
+
+    The master sheet's totals are these rows added up. Payroll that pays
+    overtime at a different rate needs it week by week, which is what this is.
+    """
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow(
+        [
+            "Week beginning (Mon)",
+            "Week ending (Sun)",
+            "Payroll ref",
+            "Surname",
+            "First name",
+            "Department",
+            "Standard week (hours)",
+            "Shifts",
+            "Clocked hours",
+            "Paid hours",
+            "Standard hours",
+            "Overtime hours",
+            "Rows needing attention",
+        ]
+    )
+    for total in totals:
+        standard_week = (
+            f"{total.standard_weekly_hours:g}"
+            if total.standard_weekly_hours is not None
+            else ""
+        )
+        for week in total.weeks:
+            writer.writerow(
+                [
+                    week.start.isoformat(),
+                    week.end.isoformat(),
+                    total.employee.payroll_ref,
+                    total.employee.last_name,
+                    total.employee.first_name,
+                    total.employee.department or "",
+                    standard_week,
+                    week.shifts,
+                    f"{week.hours:.2f}",
+                    f"{week.paid_hours:.2f}",
+                    f"{week.standard_hours:.2f}",
+                    f"{week.overtime_hours:.2f}",
+                    week.issues,
+                ]
+            )
     return buffer.getvalue()

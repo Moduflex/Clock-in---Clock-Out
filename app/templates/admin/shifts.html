@@ -1,11 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Shifts &mdash; {{ app_name }}{% endblock %}
+{% block title %}Shifts and hours &mdash; {{ app_name }}{% endblock %}
 
 {% block content %}
-<h1>Shifts</h1>
-<p class="mf-subtitle">Paid time bands. Clocking in early pays from the shift start; clocking
-    out late pays to the shift end. Pay is counted in 15-minute steps &mdash; a 07:34 arrival is
-    paid from 07:45.</p>
+<h1>Shifts and hours</h1>
+<p class="mf-subtitle">Two settings decide what gets paid: the <strong>shift</strong> sets the
+    daily paid band, and the <strong>standard week</strong> sets how many hours in a
+    Monday&ndash;Sunday week are paid at standard rate before overtime starts.</p>
+
+<h2>Shifts</h2>
+<p class="mf-note">Clocking in early pays from the shift start. Pay is counted in 15-minute
+    steps &mdash; a 07:34 arrival is paid from 07:45.</p>
 
 {% if patterns %}
 <div class="mf-table-wrap">
@@ -17,6 +21,7 @@
                 <th>End</th>
                 <th>Unpaid break</th>
                 <th>Break after</th>
+                <th>After shift end</th>
                 <th>Default</th>
                 <th>Assigned to</th>
                 <th></th>
@@ -30,6 +35,13 @@
                 <td>{{ pattern.end_time.strftime('%H:%M') }}{% if pattern.crosses_midnight %} (next day){% endif %}</td>
                 <td>{{ pattern.unpaid_break_minutes }} min</td>
                 <td>{{ (pattern.break_applies_after_minutes / 60) | round(1) }} h worked</td>
+                <td>
+                    {% if pattern.pay_beyond_end %}
+                    <span class="mf-badge mf-badge-in">Paid</span>
+                    {% else %}
+                    <span class="mf-badge">Not paid</span>
+                    {% endif %}
+                </td>
                 <td>{% if pattern.is_default %}<span class="mf-badge">Default</span>{% endif %}</td>
                 <td>{{ pattern.employees | length }} employee(s)</td>
                 <td>
@@ -51,7 +63,7 @@
     actual clocked times (still in 15-minute steps).</p></div>
 {% endif %}
 
-<h2>{{ 'Edit ' + editing.name if editing else 'Add a shift' }}</h2>
+<h3>{{ 'Edit ' + editing.name if editing else 'Add a shift' }}</h3>
 <div class="mf-card" style="max-width: 34rem;">
     <form method="post"
           action="{{ url_for('admin.shift_edit', pattern_id=editing.id) if editing else url_for('admin.shifts') }}"
@@ -67,16 +79,98 @@
         {% endfor %}
 
         <div class="mf-field mf-checkbox">
+            {{ form.pay_beyond_end() }} {{ form.pay_beyond_end.label }}
+        </div>
+        <div class="mf-field mf-checkbox">
             {{ form.is_default() }} {{ form.is_default.label }}
         </div>
         <p class="mf-note">An end time at or before the start time means the shift runs overnight.
             The unpaid break is only deducted once someone's paid time exceeds the
             "deduct break only after" threshold &mdash; so a short morning or afternoon
             stint keeps its full hours. Set the threshold to 0 to always deduct it.</p>
+        <p class="mf-note">Leave <strong>pay time worked after the shift end</strong> ticked so a
+            late finish is paid and shows up as overtime once the standard week is used up.
+            Untick it where staying on is not authorised work: pay is then trimmed back to the
+            shift end, exactly as before. An <em>early</em> arrival is always paid from the shift
+            start either way &mdash; waiting for the day to begin is not overtime.</p>
 
         <div class="mf-btn-row">
             <button class="mf-btn" type="submit">{{ 'Save changes' if editing else 'Add shift' }}</button>
             {% if editing %}
+            <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.shifts') }}">Cancel</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<h2>Standard working weeks</h2>
+<p class="mf-note">Hours worked in a Monday&ndash;Sunday week beyond the standard week are
+    reported as overtime. Someone on a 40-hour week who works 65 paid hours has
+    40 standard and 25 overtime.</p>
+
+{% if weeks %}
+<div class="mf-table-wrap">
+    <table class="mf-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Hours per week</th>
+                <th>Default</th>
+                <th>Assigned to</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for week in weeks %}
+            <tr>
+                <td>{{ week.name }}</td>
+                <td>{{ week.hours_text }} h</td>
+                <td>{% if week.is_default %}<span class="mf-badge">Default</span>{% endif %}</td>
+                <td>{{ week.employees | length }} employee(s)</td>
+                <td>
+                    <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.working_week_edit', week_id=week.id) }}">Edit</a>
+                    <form method="post" action="{{ url_for('admin.working_week_delete', week_id=week.id) }}"
+                          style="display:inline"
+                          onsubmit="return confirm('Delete standard week {{ week.name }}? Anyone on it will use the default week.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="mf-btn mf-btn-secondary" type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="mf-card"><p class="mf-empty">No standard weeks defined yet. Until one is, every paid
+    hour is reported as standard and nothing is treated as overtime.</p></div>
+{% endif %}
+
+<h3>{{ 'Edit ' + editing_week.name if editing_week else 'Add a standard week' }}</h3>
+<div class="mf-card" style="max-width: 34rem;">
+    <form method="post"
+          action="{{ url_for('admin.working_week_edit', week_id=editing_week.id) if editing_week else url_for('admin.working_week_add') }}"
+          novalidate>
+        {{ week_form.csrf_token }}
+
+        {% for field in [week_form.name, week_form.hours] %}
+        <div class="mf-field">
+            {{ field.label }}
+            {{ field(step='0.25') if field.name == 'hours' else field() }}
+            {% for error in field.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
+        </div>
+        {% endfor %}
+
+        <div class="mf-field mf-checkbox">
+            {{ week_form.is_default() }} {{ week_form.is_default.label }}
+        </div>
+        <p class="mf-note">Add as many as you need &mdash; 37.5, 39, a four-day 32 &mdash; then
+            pick one per person on their <a href="{{ url_for('admin.employees') }}">employee</a>
+            record. Anyone without one uses the default.</p>
+
+        <div class="mf-btn-row">
+            <button class="mf-btn" type="submit">{{ 'Save changes' if editing_week else 'Add standard week' }}</button>
+            {% if editing_week %}
             <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.shifts') }}">Cancel</a>
             {% endif %}
         </div>

@@ -30,14 +30,25 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Fingerprints: register which slot on which reader belongs to whom. The
   reader keeps the fingerprint and does the matching; this system stores no
   biometric data for fingerprints at all, only the slot number.
-- Timesheets: date range (defaults to the last four weeks), department and
-  per-employee filters, clocked and paid hours per shift, day-by-day drill-down
-  per person, and two CSV exports — a one-line-per-person master sheet for
-  payroll and the full daily detail.
-- Shifts: paid time bands (e.g. 07:30–16:00 with a 30-minute unpaid lunch).
-  Clocking in early pays from the shift start, clocking out late pays to the
-  shift end, and pay is counted in 15-minute steps — a 07:34 arrival is paid
-  from 07:45. One shift is the default; employees can be assigned another.
+- Timesheets: date range (defaults to the last four whole weeks), department and
+  per-employee filters, clocked and paid hours per shift, standard and overtime
+  hours per person, a week-by-week breakdown, day-by-day drill-down, and three
+  CSV exports — a one-line-per-person master sheet for payroll, the same split
+  week by week, and the full daily detail.
+- Shifts and hours: two settings decide what gets paid.
+  - **Shifts** are paid time bands (e.g. 07:30–16:00 with a 30-minute unpaid
+    lunch). Clocking in early pays from the shift start, pay is counted in
+    15-minute steps — a 07:34 arrival is paid from 07:45 — and a late finish is
+    paid past the shift end, where it becomes overtime. That last rule can be
+    turned off per shift where staying on is not authorised work. One shift is
+    the default; employees can be assigned another.
+  - **Standard working weeks** are the contracted hours per week — 40 and 32 out
+    of the box, and you can add as many more as you need (37.5, 39, whatever
+    your contracts say). Paid hours beyond the standard week are reported as
+    overtime. One is the default; employees can be assigned another.
+- Weeks run Monday to Sunday everywhere, and overtime is settled one week at a
+  time. Somebody on a 40-hour week who is paid for 65 hours in a week has 40
+  standard hours and 25 overtime hours.
 - Manual entry and voiding for corrections — both fully audited.
 - Camera check: measures what your camera actually produces so the recognition
   thresholds can be set from real numbers rather than guesses.
@@ -377,6 +388,15 @@ python scripts/init_db.py --admin office
 `scripts/init_db.py --create-database --root-user root` will also issue the
 `CREATE DATABASE` for you if you would rather not do it by hand. The script
 never drops anything, so it is safe to re-run.
+
+**Upgrading an existing installation** is the same command: re-running
+`scripts/init_db.py` adds any missing tables and columns and seeds the 40-hour
+and 32-hour standard weeks. Adding overtime brings in a `working_week` table,
+`employee.working_week_id` and `shift_pattern.pay_beyond_end`, the last of which
+is switched **on** for every existing shift — so time worked after the shift end
+starts being paid as overtime. If a shift should not work that way, untick
+"pay time worked after the shift end" for it on the Shifts and hours page before
+the next payroll run.
 
 Start it:
 
@@ -904,7 +924,7 @@ already states intent.
 | `app/services/recognition.py` | Ties the engine and index to Flask and MySQL. |
 | `app/services/attendance.py` | Alternation and cooldown rules. |
 | `app/services/enrolment.py` | Enrolment with same-person and duplicate checks. |
-| `app/services/timesheet.py` | Pairing events into shifts, totals, CSV, timezones. |
+| `app/services/timesheet.py` | Pairing events into shifts, paid hours, Monday–Sunday weeks, the standard/overtime split, CSV, timezones. |
 | `scripts/fingerprint_reader.py` | Agent that reads a fingerprint reader and posts matches. |
 | `app/blueprints/` | Kiosk, auth and admin routes. |
 | `app/security.py` | Rate limiting and the kiosk shared secret. |
@@ -920,6 +940,15 @@ Design decisions worth knowing:
   shift that has already ended, the paid hours assume they left at the shift end
   and the row says so. Without a shift, or while the shift is still running,
   the hours are left blank for a human to settle.
+- **Overtime is settled per Monday–Sunday week**, never on the reporting period
+  as a whole. Fifty hours one week and thirty the next is ten hours of overtime,
+  not none: overtime already worked is not repayable by working less later. It
+  is why the timesheet warns when the chosen range is not whole weeks — half a
+  week measured against a full week's contract reads low — and why the
+  week-by-week CSV exists, since overtime is usually paid at another rate.
+- **A missing standard week never invents overtime.** Somebody with no
+  contracted week set (and no default) has every paid hour counted as standard.
+  Guessing here would inflate a wage bill.
 - **Matching is a linear scan** — one matrix-vector product against every
   template. At small-manufacturer headcount this is sub-millisecond, and it
   avoids an approximate-nearest-neighbour index that would need maintaining.

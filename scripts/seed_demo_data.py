@@ -9,8 +9,9 @@ Real records are never touched. Safe to re-run: it refuses to add a second copy.
 
 The generated month of clockings deliberately includes the awkward cases the
 timesheet has to handle: early arrivals, late finishes, a forgotten clock-out,
-odd minutes that exercise the 15-minute pay grid, and one department on an
-early shift.
+odd minutes that exercise the 15-minute pay grid, one department on an early
+shift, and enough Saturday and late-evening work to push some people past their
+standard week so the overtime columns have something in them.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from app.models import (  # noqa: E402
     AttendanceEvent,
     Employee,
     ShiftPattern,
+    WorkingWeek,
 )
 from app.services.timesheet import get_timezone  # noqa: E402
 
@@ -42,15 +44,16 @@ DEMO_NOTE = "Demo data (scripts/seed_demo_data.py)"
 DEMO_SHIFT_NAME = "Earlies (demo)"
 
 DEMO_EMPLOYEES = [
-    # (payroll_ref, first, last, department, on_early_shift)
-    ("DEMO01", "Alice", "Turner", "Assembly", False),
-    ("DEMO02", "Bob", "Ward", "Assembly", False),
-    ("DEMO03", "Carys", "Evans", "Assembly", True),
-    ("DEMO04", "Dev", "Patel", "Joinery", False),
-    ("DEMO05", "Erin", "Hughes", "Joinery", False),
-    ("DEMO06", "Frank", "Osei", "Joinery", True),
-    ("DEMO07", "Grace", "Lam", "Office", False),
-    ("DEMO08", "Harry", "Booth", "Office", False),
+    # (payroll_ref, first, last, department, on_early_shift, standard week hours)
+    # The 32-hour people are the four-day week; None takes the default week.
+    ("DEMO01", "Alice", "Turner", "Assembly", False, None),
+    ("DEMO02", "Bob", "Ward", "Assembly", False, None),
+    ("DEMO03", "Carys", "Evans", "Assembly", True, None),
+    ("DEMO04", "Dev", "Patel", "Joinery", False, None),
+    ("DEMO05", "Erin", "Hughes", "Joinery", False, 32.0),
+    ("DEMO06", "Frank", "Osei", "Joinery", True, None),
+    ("DEMO07", "Grace", "Lam", "Office", False, 32.0),
+    ("DEMO08", "Harry", "Booth", "Office", False, None),
 ]
 
 WEEKS_OF_HISTORY = 5  # a little more than the default four-week window
@@ -83,14 +86,31 @@ def add_demo_data() -> None:
         db.session.add(early_shift)
         db.session.flush()
 
+    # Standard weeks the demo people are put on. Real installs get these from
+    # scripts/init_db.py; seed them here too so a demo database is self-contained.
+    weeks = {
+        week.hours: week
+        for week in db.session.scalars(select(WorkingWeek)).all()
+    }
+    needs_a_default = not any(week.is_default for week in weeks.values())
+    for hours, name in ((40.0, "40-hour week"), (32.0, "32-hour week")):
+        if hours not in weeks:
+            weeks[hours] = WorkingWeek(
+                name=name, hours=hours, is_default=needs_a_default and hours == 40.0
+            )
+            db.session.add(weeks[hours])
+    db.session.flush()
+
     employees: list[tuple[Employee, bool]] = []
-    for ref, first, last, department, on_earlies in DEMO_EMPLOYEES:
+    for ref, first, last, department, on_earlies, week_hours in DEMO_EMPLOYEES:
+        week = weeks.get(week_hours) if week_hours else None
         employee = Employee(
             payroll_ref=ref,
             first_name=first,
             last_name=last,
             department=department,
             shift_pattern_id=early_shift.id if on_earlies else None,
+            working_week_id=week.id if week else None,
         )
         db.session.add(employee)
         employees.append((employee, on_earlies))
@@ -103,10 +123,15 @@ def add_demo_data() -> None:
 
     for offset in range((today - start_day).days + 1):
         day = start_day + dt.timedelta(days=offset)
-        if day.weekday() >= 5:  # no weekend working in the demo
+        saturday = day.weekday() == 5
+        if day.weekday() == 6:  # nobody works Sunday in the demo
             continue
         for employee, on_earlies in employees:
-            if rng.random() < 0.06:  # the occasional day off
+            # Saturday is overtime, so only some people are in, and only
+            # for the morning. Every hour of it lands past the standard week.
+            if saturday and rng.random() < 0.6:
+                continue
+            if not saturday and rng.random() < 0.06:  # the occasional day off
                 continue
             shift_start = dt.time(6, 0) if on_earlies else dt.time(7, 30)
             shift_end = dt.time(14, 0) if on_earlies else dt.time(16, 0)
@@ -116,9 +141,20 @@ def add_demo_data() -> None:
             in_local = dt.datetime.combine(day, shift_start) + dt.timedelta(
                 minutes=rng.randint(-25, 20)
             )
-            out_local = dt.datetime.combine(day, shift_end) + dt.timedelta(
-                minutes=rng.randint(-10, 35)
-            )
+            if saturday:
+                out_local = dt.datetime.combine(day, dt.time(12, 0)) + dt.timedelta(
+                    minutes=rng.randint(-20, 25)
+                )
+            elif rng.random() < 0.18:
+                # A late finish: paid past the shift end, so it shows up as
+                # overtime once the standard week is used up.
+                out_local = dt.datetime.combine(day, shift_end) + dt.timedelta(
+                    minutes=rng.randint(90, 260)
+                )
+            else:
+                out_local = dt.datetime.combine(day, shift_end) + dt.timedelta(
+                    minutes=rng.randint(-10, 35)
+                )
 
             db.session.add(
                 AttendanceEvent(
@@ -170,6 +206,11 @@ def remove_demo_data() -> None:
 
     db.session.commit()
     print(f"Removed {len(employees)} demo employees, their events, and the demo shift.")
+    print(
+        "The standard working weeks are left in place - they are ordinary "
+        "settings, not demo data. Delete them on the Shifts and hours page if "
+        "they are not wanted."
+    )
 
 
 def main() -> int:

@@ -16,6 +16,19 @@ CREATE TABLE admin_user (
 	CONSTRAINT uq_admin_username UNIQUE (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE working_week (
+	id INTEGER NOT NULL AUTO_INCREMENT,
+	name VARCHAR(64) NOT NULL,
+	hours FLOAT NOT NULL,
+	is_default BOOL NOT NULL,
+	created_at DATETIME NOT NULL,
+	PRIMARY KEY (id),
+	UNIQUE (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Contracted hours per week. Paid hours beyond this in a Monday-Sunday week are
+-- reported as overtime; see app/services/timesheet.py.
+
 CREATE TABLE shift_pattern (
 	id INTEGER NOT NULL AUTO_INCREMENT,
 	name VARCHAR(64) NOT NULL,
@@ -23,6 +36,7 @@ CREATE TABLE shift_pattern (
 	end_time TIME NOT NULL,
 	unpaid_break_minutes INTEGER NOT NULL,
 	break_applies_after_minutes INTEGER NOT NULL DEFAULT 360,
+	pay_beyond_end BOOL NOT NULL DEFAULT 1,
 	is_default BOOL NOT NULL,
 	created_at DATETIME NOT NULL,
 	PRIMARY KEY (id),
@@ -38,16 +52,22 @@ CREATE TABLE employee (
 	email VARCHAR(190),
 	is_active BOOL NOT NULL,
 	shift_pattern_id INTEGER,
+	working_week_id INTEGER,
 	created_at DATETIME NOT NULL,
 	PRIMARY KEY (id),
 	UNIQUE (payroll_ref),
-	FOREIGN KEY(shift_pattern_id) REFERENCES shift_pattern (id) ON DELETE SET NULL
+	FOREIGN KEY(shift_pattern_id) REFERENCES shift_pattern (id) ON DELETE SET NULL,
+	FOREIGN KEY(working_week_id) REFERENCES working_week (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Upgrading a database created before the shifts feature:
 --   ALTER TABLE employee ADD COLUMN shift_pattern_id INTEGER;
 --   ALTER TABLE shift_pattern ADD COLUMN break_applies_after_minutes INTEGER NOT NULL DEFAULT 360;
--- (scripts/init_db.py does this automatically when re-run.)
+-- Upgrading a database created before overtime:
+--   (create working_week above, then)
+--   ALTER TABLE employee ADD COLUMN working_week_id INTEGER;
+--   ALTER TABLE shift_pattern ADD COLUMN pay_beyond_end BOOLEAN NOT NULL DEFAULT 1;
+-- (scripts/init_db.py does all of this automatically when re-run.)
 
 CREATE TABLE attendance_event (
 	id INTEGER NOT NULL AUTO_INCREMENT, 

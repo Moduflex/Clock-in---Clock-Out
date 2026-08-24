@@ -194,7 +194,8 @@ def test_late_clock_in_is_paid_from_the_next_quarter_hour(db):
     assert shifts[0].paid_hours == pytest.approx(7.75)  # 8.25h minus lunch
 
 
-def test_late_clock_out_is_paid_to_shift_end(db):
+def test_late_finish_is_paid_past_the_shift_end(db):
+    """Staying on is paid by default, snapped back to the grid: 16:23 -> 16:15."""
     employee = make_employee(db)
     events = [
         _event(employee, DIRECTION_IN, _utc(2026, 1, 12, 7, 30)),
@@ -202,8 +203,49 @@ def test_late_clock_out_is_paid_to_shift_end(db):
     ]
     shifts = pair_events(employee, events, LONDON, pattern=_pattern())
 
+    assert shifts[0].paid_end_local.strftime("%H:%M") == "16:15"
+    assert shifts[0].paid_hours == pytest.approx(8.25)  # 8.75h minus lunch
+
+
+def test_late_finish_is_trimmed_when_the_shift_says_not_to_pay_it(db):
+    """With pay_beyond_end off, pay stops at the shift end as it used to."""
+    employee = make_employee(db)
+    events = [
+        _event(employee, DIRECTION_IN, _utc(2026, 1, 12, 7, 30)),
+        _event(employee, DIRECTION_OUT, _utc(2026, 1, 12, 16, 23)),
+    ]
+    shifts = pair_events(
+        employee, events, LONDON, pattern=_pattern(pay_beyond_end=False)
+    )
+
     assert shifts[0].paid_end_local.strftime("%H:%M") == "16:00"
     assert shifts[0].paid_hours == pytest.approx(8.0)
+
+
+def test_an_unsaved_pattern_still_pays_past_the_shift_end(db):
+    """The default must hold on an object that has never been flushed.
+
+    A column default only lands on INSERT, so without a Python-side default a
+    pattern built in code would silently read as "do not pay past the end" and
+    quietly underpay somebody.
+    """
+    assert ShiftPattern(
+        name="Nights", start_time=dt.time(20, 0), end_time=dt.time(4, 0)
+    ).pay_beyond_end is True
+
+
+def test_early_arrival_is_never_paid_before_the_shift_start(db):
+    """The other end of the band still holds: waiting about is not overtime."""
+    employee = make_employee(db)
+    events = [
+        _event(employee, DIRECTION_IN, _utc(2026, 1, 12, 5, 0)),
+        _event(employee, DIRECTION_OUT, _utc(2026, 1, 12, 18, 0)),
+    ]
+    shifts = pair_events(employee, events, LONDON, pattern=_pattern())
+
+    assert shifts[0].paid_start_local.strftime("%H:%M") == "07:30"
+    assert shifts[0].paid_end_local.strftime("%H:%M") == "18:00"
+    assert shifts[0].paid_hours == pytest.approx(10.0)  # 10.5h minus lunch
 
 
 def test_early_clock_out_rounds_back_to_the_grid(db):

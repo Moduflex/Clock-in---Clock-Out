@@ -299,6 +299,148 @@ def test_shift_pattern_can_be_added_edited_and_deleted(logged_in, db):
     assert db.session.query(ShiftPattern).count() == 0
 
 
+def test_pay_beyond_end_survives_a_round_trip_through_the_form(logged_in, db):
+    """Ticking and unticking the late-finish switch must both stick."""
+    from app.models import ShiftPattern
+
+    data = {
+        "name": "Standard day",
+        "start_time": "07:30",
+        "end_time": "16:00",
+        "unpaid_break_minutes": "30",
+        "pay_beyond_end": "y",
+    }
+    logged_in.post("/admin/shifts", data=data, follow_redirects=True)
+    pattern = db.session.query(ShiftPattern).one()
+    assert pattern.pay_beyond_end is True
+
+    logged_in.post(
+        f"/admin/shifts/{pattern.id}/edit",
+        data={k: v for k, v in data.items() if k != "pay_beyond_end"},
+        follow_redirects=True,
+    )
+    assert pattern.pay_beyond_end is False
+
+
+def test_standard_week_can_be_added_edited_and_deleted(logged_in, db):
+    from app.models import WorkingWeek
+
+    response = logged_in.post(
+        "/admin/shifts/weeks",
+        data={"name": "40-hour week", "hours": "40", "is_default": "y"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    week = db.session.query(WorkingWeek).one()
+    assert week.hours == 40.0
+    assert week.is_default
+
+    response = logged_in.post(
+        f"/admin/shifts/weeks/{week.id}/edit",
+        data={"name": "37.5-hour week", "hours": "37.5", "is_default": "y"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert week.hours == 37.5
+    assert week.name == "37.5-hour week"
+
+    response = logged_in.post(
+        f"/admin/shifts/weeks/{week.id}/delete", follow_redirects=True
+    )
+    assert response.status_code == 200
+    assert db.session.query(WorkingWeek).count() == 0
+
+
+def test_only_one_standard_week_is_the_default(logged_in, db):
+    from app.models import WorkingWeek
+
+    for name, hours in (("40-hour week", "40"), ("32-hour week", "32")):
+        logged_in.post(
+            "/admin/shifts/weeks",
+            data={"name": name, "hours": hours, "is_default": "y"},
+            follow_redirects=True,
+        )
+    weeks = db.session.query(WorkingWeek).all()
+    assert [w.name for w in weeks if w.is_default] == ["32-hour week"]
+
+
+def test_duplicate_standard_week_name_is_rejected(logged_in, db):
+    from app.models import WorkingWeek
+
+    data = {"name": "40-hour week", "hours": "40"}
+    logged_in.post("/admin/shifts/weeks", data=data, follow_redirects=True)
+    response = logged_in.post("/admin/shifts/weeks", data=data, follow_redirects=True)
+    assert b"already exists" in response.data
+    assert db.session.query(WorkingWeek).count() == 1
+
+
+def test_deleting_a_standard_week_falls_back_to_the_default(logged_in, db):
+    from app.models import WorkingWeek
+
+    week = WorkingWeek(name="32-hour week", hours=32.0)
+    db.session.add(week)
+    db.session.commit()
+    employee = make_employee(db, working_week_id=week.id)
+
+    logged_in.post(f"/admin/shifts/weeks/{week.id}/delete", follow_redirects=True)
+    assert employee.working_week_id is None
+
+
+def test_employee_form_saves_the_standard_week(logged_in, db):
+    from app.models import Employee, WorkingWeek
+
+    week = WorkingWeek(name="32-hour week", hours=32.0)
+    db.session.add(week)
+    db.session.commit()
+
+    logged_in.post(
+        "/admin/employees/new",
+        data={
+            "payroll_ref": "E200",
+            "first_name": "Sam",
+            "last_name": "Reid",
+            "shift_pattern_id": "0",
+            "working_week_id": str(week.id),
+            "is_active": "y",
+        },
+        follow_redirects=True,
+    )
+    employee = db.session.query(Employee).filter_by(payroll_ref="E200").one()
+    assert employee.working_week_id == week.id
+
+
+def test_timesheets_default_to_whole_monday_to_sunday_weeks(logged_in, db):
+    """The page's own dates come back as a Monday and a Sunday."""
+    import datetime as dt
+    import re
+
+    make_employee(db)
+    response = logged_in.get("/admin/timesheets")
+    assert response.status_code == 200
+    body = response.data.decode("utf-8")
+    dates = re.findall(r'name="(start|end)" value="(\d{4}-\d{2}-\d{2})"', body)
+    found = dict(dates)
+    assert dt.date.fromisoformat(found["start"]).weekday() == 0  # Monday
+    assert dt.date.fromisoformat(found["end"]).weekday() == 6  # Sunday
+
+
+def test_part_week_range_warns_about_the_overtime_figure(logged_in, db):
+    make_employee(db)
+    response = logged_in.get("/admin/timesheets?start=2026-01-06&end=2026-01-20")
+    assert b"does not cover whole Monday" in response.data
+    # And offers the widened range: Mon 05/01 to Sun 25/01.
+    assert b"start=2026-01-05&amp;end=2026-01-25" in response.data
+
+
+def test_weekly_sheet_csv_downloads(logged_in, db):
+    make_employee(db)
+    response = logged_in.get("/admin/timesheets/weekly.csv?start=2026-01-05&end=2026-01-18")
+    assert response.status_code == 200
+    assert response.mimetype == "text/csv"
+    assert "weekly_sheet" in response.headers["Content-Disposition"]
+    assert b"Overtime hours" in response.data
+
+
 def test_duplicate_shift_name_is_rejected(logged_in, db):
     from app.models import ShiftPattern
 

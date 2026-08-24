@@ -29,7 +29,7 @@ from sqlalchemy.engine import URL  # noqa: E402
 from app import create_app  # noqa: E402
 from app.config import get_config  # noqa: E402
 from app.extensions import db  # noqa: E402
-from app.models import AdminUser, ShiftPattern  # noqa: E402
+from app.models import AdminUser, ShiftPattern, WorkingWeek  # noqa: E402
 
 
 def create_database(config, root_user: str | None, root_password: str | None) -> None:
@@ -75,6 +75,11 @@ def upgrade_existing_tables() -> None:
         db.session.commit()
         print("Added employee.shift_pattern_id column.")
 
+    if "working_week_id" not in columns:
+        db.session.execute(text("ALTER TABLE employee ADD COLUMN working_week_id INTEGER"))
+        db.session.commit()
+        print("Added employee.working_week_id column.")
+
     shift_columns = {c["name"] for c in inspect(db.engine).get_columns("shift_pattern")}
     if "break_applies_after_minutes" not in shift_columns:
         db.session.execute(
@@ -85,6 +90,23 @@ def upgrade_existing_tables() -> None:
         )
         db.session.commit()
         print("Added shift_pattern.break_applies_after_minutes column (default 360).")
+
+    if "pay_beyond_end" not in shift_columns:
+        # On by default, including for shifts that already exist: a late finish
+        # is paid and becomes overtime. Untick it per shift on the Shifts and
+        # hours page where staying on is not authorised work.
+        db.session.execute(
+            text(
+                "ALTER TABLE shift_pattern ADD COLUMN pay_beyond_end "
+                "BOOLEAN NOT NULL DEFAULT 1"
+            )
+        )
+        db.session.commit()
+        print(
+            "Added shift_pattern.pay_beyond_end column, on for every shift - "
+            "time worked after the shift end is now paid as overtime. Untick it "
+            "per shift on the Shifts and hours page to keep the old behaviour."
+        )
 
 
 def seed_default_shift() -> None:
@@ -102,6 +124,20 @@ def seed_default_shift() -> None:
     )
     db.session.commit()
     print("Seeded default shift 'Standard day' (07:30-16:00, 30 min unpaid lunch).")
+
+
+def seed_working_weeks() -> None:
+    """Create the standard week lengths once; never touch existing rows."""
+    if db.session.scalars(select(WorkingWeek)).first() is not None:
+        return
+    db.session.add_all(
+        [
+            WorkingWeek(name="40-hour week", hours=40.0, is_default=True),
+            WorkingWeek(name="32-hour week", hours=32.0),
+        ]
+    )
+    db.session.commit()
+    print("Seeded standard weeks: 40 hours (default) and 32 hours.")
 
 
 def create_admin(username: str) -> None:
@@ -149,6 +185,7 @@ def main() -> int:
         print("Tables created (existing tables untouched).")
         upgrade_existing_tables()
         seed_default_shift()
+        seed_working_weeks()
         if args.admin:
             create_admin(args.admin)
 

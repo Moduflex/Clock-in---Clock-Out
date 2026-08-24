@@ -25,6 +25,7 @@
                 <th>Payroll ref</th>
                 <th>Name</th>
                 <th>Department</th>
+                <th>Standard week</th>
                 <th>Status</th>
                 <th>Face enrolled</th>
                 <th></th>
@@ -36,6 +37,10 @@
                 <td>{{ employee.payroll_ref }}</td>
                 <td><a href="{{ url_for('admin.employee_detail', employee_id=employee.id) }}">{{ employee.full_name }}</a></td>
                 <td>{{ employee.department or '' }}</td>
+                <td>
+                    {% if employee.working_week %}{{ employee.working_week.hours_text }} h
+                    {% else %}<span class="mf-note">Default</span>{% endif %}
+                </td>
                 <td>
                     {% if employee.is_active %}
                     <span class="mf-badge mf-badge-in">Active</span>

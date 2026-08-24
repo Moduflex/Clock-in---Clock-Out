@@ -3,17 +3,17 @@
 
 {% block content %}
 <h1>Timesheets</h1>
-<p class="mf-subtitle">{{ start.strftime('%d/%m/%Y') }} to {{ end.strftime('%d/%m/%Y') }}
-    &middot; times in {{ timezone_name }}</p>
+<p class="mf-subtitle">{{ start.strftime('%a %d/%m/%Y') }} to {{ end.strftime('%a %d/%m/%Y') }}
+    &middot; weeks run Monday to Sunday &middot; times in {{ timezone_name }}</p>
 
 <div class="mf-card">
     <form method="get" class="mf-filter-row">
         <div class="mf-field">
-            <label for="start">From</label>
+            <label for="start">From (Monday)</label>
             <input type="date" id="start" name="start" value="{{ start.isoformat() }}">
         </div>
         <div class="mf-field">
-            <label for="end">To</label>
+            <label for="end">To (Sunday)</label>
             <input type="date" id="end" name="end" value="{{ end.isoformat() }}">
         </div>
         <div class="mf-field">
@@ -42,11 +42,30 @@
             Master sheet (CSV)
         </a>
         <a class="mf-btn mf-btn-secondary"
+           href="{{ url_for('admin.timesheets_weekly_csv', start=start.isoformat(), end=end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
+            Week by week (CSV)
+        </a>
+        <a class="mf-btn mf-btn-secondary"
            href="{{ url_for('admin.timesheets_csv', start=start.isoformat(), end=end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
             Full detail (CSV)
         </a>
     </form>
+    <p class="mf-note">
+        Whole weeks:
+        {% for label, from_date, to_date in shortcuts %}
+        <a href="{{ url_for('admin.timesheets', start=from_date.isoformat(), end=to_date.isoformat(), employee_id=employee_id or '', department=department or '') }}">{{ label }}</a>{% if not loop.last %} &middot; {% endif %}
+        {% endfor %}
+    </p>
 </div>
+
+{% if not whole_weeks %}
+<div class="mf-flash mf-flash-warning">
+    This range does not cover whole Monday&ndash;Sunday weeks, so the part-weeks at either end
+    are measured against a full week's contracted hours and their overtime will read low.
+    <a href="{{ url_for('admin.timesheets', start=snapped_start.isoformat(), end=snapped_end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
+        Widen to {{ snapped_start.strftime('%d/%m/%Y') }} &ndash; {{ snapped_end.strftime('%d/%m/%Y') }}</a>.
+</div>
+{% endif %}
 
 {% if totals %}
 <h2>Master sheet</h2>
@@ -57,9 +76,12 @@
                 <th>Employee</th>
                 <th>Payroll ref</th>
                 <th>Department</th>
+                <th>Standard week</th>
                 <th>Complete shifts</th>
                 <th>Clocked hours</th>
                 <th>Paid hours</th>
+                <th>Standard pay hours</th>
+                <th>Overtime pay hours</th>
                 <th>Needs attention</th>
                 <th></th>
             </tr>
@@ -70,9 +92,24 @@
                 <td><a href="{{ url_for('admin.employee_detail', employee_id=total.employee.id) }}">{{ total.employee.full_name }}</a></td>
                 <td>{{ total.employee.payroll_ref }}</td>
                 <td>{{ total.employee.department or '' }}</td>
+                <td>
+                    {% if total.standard_weekly_hours is not none %}
+                    {{ '%g' | format(total.standard_weekly_hours) }} h
+                    {% else %}
+                    <span class="mf-badge mf-badge-warn">Not set</span>
+                    {% endif %}
+                </td>
                 <td>{{ total.shifts }}</td>
                 <td>{{ total.hours | hoursmins }} <span class="mf-note">({{ '%.2f' | format(total.hours) }})</span></td>
-                <td><strong>{{ total.paid_hours | hoursmins }}</strong> <span class="mf-note">({{ '%.2f' | format(total.paid_hours) }})</span></td>
+                <td>{{ total.paid_hours | hoursmins }} <span class="mf-note">({{ '%.2f' | format(total.paid_hours) }})</span></td>
+                <td><strong>{{ total.standard_hours | hoursmins }}</strong> <span class="mf-note">({{ '%.2f' | format(total.standard_hours) }})</span></td>
+                <td>
+                    {% if total.overtime_hours %}
+                    <strong>{{ total.overtime_hours | hoursmins }}</strong> <span class="mf-note">({{ '%.2f' | format(total.overtime_hours) }})</span>
+                    {% else %}
+                    &mdash;
+                    {% endif %}
+                </td>
                 <td class="mf-wrap">
                     {% if total.issues %}
                     <span class="mf-badge mf-badge-warn">{{ total.issues }} row(s)</span>
@@ -87,13 +124,51 @@
         </tbody>
         <tfoot>
             <tr>
-                <td colspan="4">All employees shown</td>
+                <td colspan="5">All employees shown</td>
                 <td>{{ (totals | sum(attribute='hours')) | round(2) | hoursmins }}</td>
                 <td>{{ (totals | sum(attribute='paid_hours')) | round(2) | hoursmins }}</td>
+                <td>{{ (totals | sum(attribute='standard_hours')) | round(2) | hoursmins }}</td>
+                <td>{{ (totals | sum(attribute='overtime_hours')) | round(2) | hoursmins }}</td>
                 <td></td>
                 <td></td>
             </tr>
         </tfoot>
+    </table>
+</div>
+<p class="mf-note">Standard and overtime are worked out on each Monday&ndash;Sunday week
+    separately and then added up, so a quiet week cannot cancel out a busy one.
+    Set each person's contracted hours on the <a href="{{ url_for('admin.shifts') }}">Shifts and
+    hours</a> page.</p>
+
+<h2>Week by week</h2>
+<div class="mf-table-wrap">
+    <table class="mf-table">
+        <thead>
+            <tr>
+                <th>Week (Mon&ndash;Sun)</th>
+                <th>Employee</th>
+                <th>Shifts</th>
+                <th>Clocked hours</th>
+                <th>Paid hours</th>
+                <th>Standard pay hours</th>
+                <th>Overtime pay hours</th>
+                <th>Needs attention</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for week in weeks %}
+            <tr class="{{ 'mf-row-issue' if week.issues else '' }}">
+                <td>{{ week.label }}</td>
+                <td>{{ week.employee.full_name }}</td>
+                <td>{{ week.shifts }}</td>
+                <td>{{ week.hours | hoursmins }}</td>
+                <td>{{ week.paid_hours | hoursmins }}</td>
+                <td>{{ week.standard_hours | hoursmins }}</td>
+                <td>{% if week.overtime_hours %}<strong>{{ week.overtime_hours | hoursmins }}</strong>{% else %}&mdash;{% endif %}</td>
+                <td>{% if week.issues %}<span class="mf-badge mf-badge-warn">{{ week.issues }} row(s)</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
     </table>
 </div>
 
@@ -135,8 +210,9 @@
 <p class="mf-note">Highlighted rows are unpaired entries. A missing clock-out on a finished
     shift is paid to the shift end and marked as such; anything else is left blank &mdash; correct
     it with <a href="{{ url_for('admin.event_manual') }}">manual entry</a> before running payroll.
-    Paid hours are clipped to the employee's <a href="{{ url_for('admin.shifts') }}">shift</a>,
-    counted in 15-minute steps, with the unpaid break deducted on attendances long
+    Paid hours start at the employee's <a href="{{ url_for('admin.shifts') }}">shift</a> start
+    however early they arrive, run on past the shift end where the shift allows it, are
+    counted in 15-minute steps, and have the unpaid break deducted on attendances long
     enough to include it.</p>
 {% else %}
 <div class="mf-card"><p class="mf-empty">No clocking activity in this period.</p></div>

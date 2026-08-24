@@ -52,6 +52,39 @@ def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
 
+class WorkingWeek(db.Model):
+    """A contracted standard week, e.g. 40 hours. Anything past it is overtime.
+
+    Held as rows rather than a hard-coded list so adding a contract length (37.5,
+    39, a four-day 32) is a job for whoever runs the office, not a release. The
+    week the hours are counted over runs Monday to Sunday - see
+    ``timesheet.week_start`` - so overtime is settled week by week rather than
+    smeared across a reporting period of arbitrary length.
+    """
+
+    __tablename__ = "working_week"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    hours: Mapped[float] = mapped_column(Float, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+    employees: Mapped[list["Employee"]] = relationship(back_populates="working_week")
+
+    @property
+    def hours_text(self) -> str:
+        """40.0 -> "40", 37.5 -> "37.5" - no spurious decimal on whole hours."""
+        return f"{self.hours:g}"
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} ({self.hours_text} h)"
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<WorkingWeek {self.name} {self.hours_text}h>"
+
+
 class ShiftPattern(db.Model):
     """A paid time band, e.g. 07:30-16:00 with a 30-minute unpaid lunch.
 
@@ -74,10 +107,22 @@ class ShiftPattern(db.Model):
     break_applies_after_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, default=360
     )
+    # Time worked after the shift end is paid (and lands in the overtime column)
+    # rather than being trimmed back to the band. Turn it off for a shift where
+    # staying late is not authorised work and must not be paid for.
+    pay_beyond_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
     employees: Mapped[list["Employee"]] = relationship(back_populates="shift_pattern")
+
+    def __init__(self, **kwargs):
+        # A column default is only applied on INSERT, which would leave a
+        # not-yet-saved pattern reading as "do not pay past the shift end" -
+        # the opposite of the intended default, and a wrong wage if it were
+        # ever used to work out pay. Set it on the object as well.
+        kwargs.setdefault("pay_beyond_end", True)
+        super().__init__(**kwargs)
 
     @property
     def crosses_midnight(self) -> bool:
@@ -108,6 +153,10 @@ class Employee(db.Model):
     shift_pattern_id: Mapped[int | None] = mapped_column(
         ForeignKey("shift_pattern.id", ondelete="SET NULL")
     )
+    # NULL means "use the default standard week", so new starters need no setup.
+    working_week_id: Mapped[int | None] = mapped_column(
+        ForeignKey("working_week.id", ondelete="SET NULL")
+    )
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
     templates: Mapped[list["FaceTemplate"]] = relationship(
@@ -117,6 +166,7 @@ class Employee(db.Model):
         back_populates="employee", cascade="all, delete-orphan", lazy="select"
     )
     shift_pattern: Mapped[ShiftPattern | None] = relationship(back_populates="employees")
+    working_week: Mapped[WorkingWeek | None] = relationship(back_populates="employees")
     fingerprints: Mapped[list["FingerprintCredential"]] = relationship(
         back_populates="employee", cascade="all, delete-orphan", lazy="selectin"
     )

@@ -20,6 +20,7 @@ from flask_wtf import FlaskForm
 from sqlalchemy import select
 from wtforms import (
     BooleanField,
+    FloatField,
     IntegerField,
     SelectField,
     StringField,
@@ -39,6 +40,7 @@ from ..models import (
     Employee,
     FingerprintCredential,
     ShiftPattern,
+    WorkingWeek,
     visible_employee_clause,
 )
 from ..services import attendance
@@ -46,12 +48,19 @@ from ..services.enrolment import enrol_employee, remove_enrolment
 from ..services.recognition import get_index
 from ..services.timesheet import (
     build_timesheet,
+    default_range,
     get_timezone,
+    is_whole_weeks,
     list_departments,
     summarise,
     to_csv,
     to_local,
     to_master_csv,
+    to_weekly_csv,
+    week_end,
+    week_start,
+    weekly_totals,
+    whole_weeks,
 )
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -74,6 +83,9 @@ class EmployeeForm(FlaskForm):
     department = StringField("Department", validators=[Optional(), Length(max=64)])
     email = StringField("Email", validators=[Optional(), Email(), Length(max=190)])
     shift_pattern_id = SelectField("Shift", coerce=int, validators=[Optional()])
+    working_week_id = SelectField(
+        "Standard working hours per week", coerce=int, validators=[Optional()]
+    )
     is_active = BooleanField("Active", default=True)
 
 
@@ -94,7 +106,24 @@ class ShiftPatternForm(FlaskForm):
             NumberRange(min=0, max=1440, message="Between 0 and 1440 minutes."),
         ],
     )
+    pay_beyond_end = BooleanField(
+        "Pay time worked after the shift end (counts as overtime)", default=True
+    )
     is_default = BooleanField("Default shift for employees without one assigned")
+
+
+class WorkingWeekForm(FlaskForm):
+    """A contracted week length. Hours past it in a Monday-Sunday week are overtime."""
+
+    name = StringField("Name", validators=[DataRequired(), Length(max=64)])
+    hours = FloatField(
+        "Standard working hours per week",
+        validators=[
+            DataRequired(message="Enter the contracted hours per week."),
+            NumberRange(min=1, max=168, message="Between 1 and 168 hours."),
+        ],
+    )
+    is_default = BooleanField("Default for employees without one assigned")
 
 
 class ManualEventForm(FlaskForm):
@@ -181,6 +210,14 @@ def _shift_choices() -> list[tuple[int, str]]:
     return [(0, "Default shift")] + [(p.id, p.label) for p in patterns]
 
 
+def _working_week_choices() -> list[tuple[int, str]]:
+    """Options for the employee form; 0 means "use the default standard week"."""
+    weeks = db.session.scalars(select(WorkingWeek).order_by(WorkingWeek.hours)).all()
+    default = next((w for w in weeks if w.is_default), None)
+    label = f"Default ({default.hours_text} hours)" if default else "Default"
+    return [(0, label)] + [(w.id, w.label) for w in weeks]
+
+
 # --------------------------------------------------------------------------
 # Dashboard
 # --------------------------------------------------------------------------
@@ -243,6 +280,7 @@ def employees():
 def employee_new():
     form = EmployeeForm()
     form.shift_pattern_id.choices = _shift_choices()
+    form.working_week_id.choices = _working_week_choices()
     if form.validate_on_submit():
         clash = db.session.scalars(
             select(Employee).where(Employee.payroll_ref == form.payroll_ref.data)
@@ -258,6 +296,7 @@ def employee_new():
             department=(form.department.data or "").strip() or None,
             email=(form.email.data or "").strip() or None,
             shift_pattern_id=form.shift_pattern_id.data or None,
+            working_week_id=form.working_week_id.data or None,
             is_active=bool(form.is_active.data),
         )
         db.session.add(employee)
@@ -273,8 +312,10 @@ def employee_edit(employee_id: int):
     employee = db.get_or_404(Employee, employee_id)
     form = EmployeeForm(obj=employee)
     form.shift_pattern_id.choices = _shift_choices()
+    form.working_week_id.choices = _working_week_choices()
     if request.method == "GET":
         form.shift_pattern_id.data = employee.shift_pattern_id or 0
+        form.working_week_id.data = employee.working_week_id or 0
     if form.validate_on_submit():
         clash = db.session.scalars(
             select(Employee).where(
@@ -291,6 +332,7 @@ def employee_edit(employee_id: int):
         employee.department = (form.department.data or "").strip() or None
         employee.email = (form.email.data or "").strip() or None
         employee.shift_pattern_id = form.shift_pattern_id.data or None
+        employee.working_week_id = form.working_week_id.data or None
         employee.is_active = bool(form.is_active.data)
         db.session.commit()
         flash(f"Updated {employee.full_name}.", "success")
@@ -452,11 +494,17 @@ def employee_enrol_clear(employee_id: int):
 # Timesheets
 # --------------------------------------------------------------------------
 def _timesheet_args():
+    """The filters from the query string, defaulting to four whole weeks.
+
+    The default range is Monday-Sunday aligned because overtime is settled per
+    week: a range starting mid-week would compare part of a week against a full
+    week's contract and under-report the overtime in it.
+    """
     tz = _tz()
     today = dt.datetime.now(tz).date()
-    default_start = today - dt.timedelta(days=27)  # last four weeks, today inclusive
+    default_start, default_end = default_range(today)
     start = _parse_date(request.args.get("start"), default_start)
-    end = _parse_date(request.args.get("end"), today)
+    end = _parse_date(request.args.get("end"), default_end)
     if end < start:
         start, end = end, start
     raw_employee = request.args.get("employee_id")
@@ -465,18 +513,37 @@ def _timesheet_args():
     return start, end, employee_id, department, tz
 
 
+def _week_shortcuts(today: dt.date) -> list[tuple[str, dt.date, dt.date]]:
+    """Monday-Sunday quick ranges for the timesheet filter row."""
+    this_monday = week_start(today)
+    last_monday = this_monday - dt.timedelta(days=7)
+    return [
+        ("This week", this_monday, week_end(today)),
+        ("Last week", last_monday, week_end(last_monday)),
+        ("Last 4 weeks", *default_range(today)),
+        ("Last 13 weeks", *default_range(today, weeks=13)),
+    ]
+
+
 @bp.get("/timesheets")
 def timesheets():
     start, end, employee_id, department, tz = _timesheet_args()
     shifts = build_timesheet(
         start, end, tz, employee_id=employee_id, department=department
     )
+    totals = summarise(shifts)
+    snapped_start, snapped_end = whole_weeks(start, end)
     return render_template(
         "admin/timesheets.html",
         shifts=shifts,
-        totals=summarise(shifts),
+        totals=totals,
+        weeks=weekly_totals(totals),
         start=start,
         end=end,
+        whole_weeks=is_whole_weeks(start, end),
+        snapped_start=snapped_start,
+        snapped_end=snapped_end,
+        shortcuts=_week_shortcuts(dt.datetime.now(tz).date()),
         employee_id=employee_id,
         department=department,
         departments=list_departments(),
@@ -504,7 +571,7 @@ def timesheets_csv():
 
 @bp.get("/timesheets/master.csv")
 def timesheets_master_csv():
-    """One line per person with total paid hours - the payroll master sheet."""
+    """One line per person, paid hours split into standard and overtime."""
     start, end, employee_id, department, tz = _timesheet_args()
     shifts = build_timesheet(
         start, end, tz, employee_id=employee_id, department=department
@@ -512,6 +579,21 @@ def timesheets_master_csv():
     filename = f"master_sheet_{start.isoformat()}_to_{end.isoformat()}.csv"
     return Response(
         to_master_csv(summarise(shifts)),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@bp.get("/timesheets/weekly.csv")
+def timesheets_weekly_csv():
+    """One line per person per Monday-Sunday week - where overtime is decided."""
+    start, end, employee_id, department, tz = _timesheet_args()
+    shifts = build_timesheet(
+        start, end, tz, employee_id=employee_id, department=department
+    )
+    filename = f"weekly_sheet_{start.isoformat()}_to_{end.isoformat()}.csv"
+    return Response(
+        to_weekly_csv(summarise(shifts)),
         mimetype="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -541,6 +623,7 @@ def _save_shift_pattern(form: ShiftPatternForm, pattern: ShiftPattern | None) ->
     pattern.unpaid_break_minutes = int(form.unpaid_break_minutes.data or 0)
     threshold = form.break_applies_after_minutes.data
     pattern.break_applies_after_minutes = 360 if threshold is None else int(threshold)
+    pattern.pay_beyond_end = bool(form.pay_beyond_end.data)
 
     if form.is_default.data:
         # Only one pattern can be the default at a time.
@@ -554,17 +637,31 @@ def _save_shift_pattern(form: ShiftPatternForm, pattern: ShiftPattern | None) ->
     return True
 
 
+def _render_shifts(
+    form: ShiftPatternForm | None = None,
+    week_form: WorkingWeekForm | None = None,
+    editing: ShiftPattern | None = None,
+    editing_week: WorkingWeek | None = None,
+):
+    """The Shifts page: shift patterns and standard weeks, each with its form."""
+    return render_template(
+        "admin/shifts.html",
+        patterns=db.session.scalars(select(ShiftPattern).order_by(ShiftPattern.name)).all(),
+        weeks=db.session.scalars(select(WorkingWeek).order_by(WorkingWeek.hours)).all(),
+        form=form or ShiftPatternForm(),
+        week_form=week_form or WorkingWeekForm(),
+        editing=editing,
+        editing_week=editing_week,
+    )
+
+
 @bp.route("/shifts", methods=["GET", "POST"])
 def shifts():
     form = ShiftPatternForm()
     if form.validate_on_submit() and _save_shift_pattern(form, None):
         flash(f"Added shift {form.name.data!r}.", "success")
         return redirect(url_for("admin.shifts"))
-
-    patterns = db.session.scalars(
-        select(ShiftPattern).order_by(ShiftPattern.name)
-    ).all()
-    return render_template("admin/shifts.html", patterns=patterns, form=form, editing=None)
+    return _render_shifts(form=form)
 
 
 @bp.route("/shifts/<int:pattern_id>/edit", methods=["GET", "POST"])
@@ -574,11 +671,7 @@ def shift_edit(pattern_id: int):
     if form.validate_on_submit() and _save_shift_pattern(form, pattern):
         flash(f"Updated shift {pattern.name!r}.", "success")
         return redirect(url_for("admin.shifts"))
-
-    patterns = db.session.scalars(
-        select(ShiftPattern).order_by(ShiftPattern.name)
-    ).all()
-    return render_template("admin/shifts.html", patterns=patterns, form=form, editing=pattern)
+    return _render_shifts(form=form, editing=pattern)
 
 
 @bp.post("/shifts/<int:pattern_id>/delete")
@@ -592,6 +685,75 @@ def shift_delete(pattern_id: int):
     db.session.commit()
     flash(
         f"Deleted shift {name!r}. Anyone assigned to it now uses the default shift.",
+        "success",
+    )
+    return redirect(url_for("admin.shifts"))
+
+
+# --------------------------------------------------------------------------
+# Standard working weeks
+# --------------------------------------------------------------------------
+def _save_working_week(form: WorkingWeekForm, week: WorkingWeek | None) -> bool:
+    """Apply the form to *week* (or a new one). Returns False on a name clash."""
+    clash = db.session.scalars(
+        select(WorkingWeek).where(
+            WorkingWeek.name == (form.name.data or "").strip(),
+            WorkingWeek.id != (week.id if week else 0),
+        )
+    ).first()
+    if clash is not None:
+        flash(f"A standard week called {form.name.data!r} already exists.", "error")
+        return False
+
+    if week is None:
+        week = WorkingWeek()
+        db.session.add(week)
+    week.name = (form.name.data or "").strip()
+    week.hours = float(form.hours.data)
+
+    if form.is_default.data:
+        # Only one standard week can be the default at a time.
+        for other in db.session.scalars(select(WorkingWeek)).all():
+            other.is_default = other is week
+        week.is_default = True
+    else:
+        week.is_default = False
+
+    db.session.commit()
+    return True
+
+
+@bp.post("/shifts/weeks")
+def working_week_add():
+    form = WorkingWeekForm()
+    if form.validate_on_submit() and _save_working_week(form, None):
+        flash(f"Added standard week {form.name.data!r}.", "success")
+        return redirect(url_for("admin.shifts"))
+    # Field errors are rendered inline next to the input, as on the shift form.
+    return _render_shifts(week_form=form)
+
+
+@bp.route("/shifts/weeks/<int:week_id>/edit", methods=["GET", "POST"])
+def working_week_edit(week_id: int):
+    week = db.get_or_404(WorkingWeek, week_id)
+    form = WorkingWeekForm(obj=week)
+    if form.validate_on_submit() and _save_working_week(form, week):
+        flash(f"Updated standard week {week.name!r}.", "success")
+        return redirect(url_for("admin.shifts"))
+    return _render_shifts(week_form=form, editing_week=week)
+
+
+@bp.post("/shifts/weeks/<int:week_id>/delete")
+def working_week_delete(week_id: int):
+    week = db.get_or_404(WorkingWeek, week_id)
+    # Employees pointing at it fall back to the default week (FK is SET NULL).
+    for employee in list(week.employees):
+        employee.working_week_id = None
+    name = week.name
+    db.session.delete(week)
+    db.session.commit()
+    flash(
+        f"Deleted standard week {name!r}. Anyone on it now uses the default week.",
         "success",
     )
     return redirect(url_for("admin.shifts"))
