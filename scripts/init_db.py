@@ -80,6 +80,15 @@ def upgrade_existing_tables() -> None:
         db.session.commit()
         print("Added employee.working_week_id column.")
 
+    # Encrypted hourly rates. BLOB on MySQL, and SQLite takes it verbatim.
+    for column in ("basic_rate_enc", "overtime_rate_enc"):
+        if column not in columns:
+            db.session.execute(
+                text(f"ALTER TABLE employee ADD COLUMN {column} BLOB")
+            )
+            db.session.commit()
+            print(f"Added employee.{column} column (encrypted pay rate).")
+
     shift_columns = {c["name"] for c in inspect(db.engine).get_columns("shift_pattern")}
     if "break_applies_after_minutes" not in shift_columns:
         db.session.execute(

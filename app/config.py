@@ -103,6 +103,18 @@ class Config:
     CLOCK_COOLDOWN_SECONDS = _int("CLOCK_COOLDOWN_SECONDS", 5)
     TIMEZONE = os.getenv("TIMEZONE", "Europe/London")
 
+    # --- Payroll ----------------------------------------------------------
+    # Key for the encrypted hourly-rate columns (see services/payrates.py).
+    # Generate one with "flask payroll-key". Left blank, a key is derived from
+    # SECRET_KEY so a fresh install works - but then rotating SECRET_KEY makes
+    # every stored rate unreadable, which is why production should set this.
+    PAYROLL_KEY = os.getenv("PAYROLL_KEY", "")
+    # Four-weekly payroll: the Monday period 1 of the payroll year starts on.
+    # The master sheet counts 28-day periods from here to fill in "Period:".
+    PAYROLL_PERIOD_1_START = os.getenv("PAYROLL_PERIOD_1_START", "2026-03-30")
+    PAYROLL_PERIODS_PER_YEAR = _int("PAYROLL_PERIODS_PER_YEAR", 13)
+    PAYROLL_COMPANY_NAME = os.getenv("PAYROLL_COMPANY_NAME", "Moduflex Ltd")
+
     # --- Kiosk ------------------------------------------------------------
     KIOSK_TOKEN = os.getenv("KIOSK_TOKEN", "")
     KIOSK_DEVICE_LABEL = os.getenv("KIOSK_DEVICE_LABEL", "Kiosk")

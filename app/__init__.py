@@ -219,6 +219,20 @@ def _register_cli(app: Flask) -> None:
         db.session.commit()
         click.echo(f"Created administrator {username!r}.")
 
+    @app.cli.command("payroll-key")
+    def payroll_key_command() -> None:
+        """Generate a key for the encrypted pay-rate columns."""
+        from .services.payrates import generate_key
+
+        click.echo("Paste this into .env, then restart:")
+        click.echo("")
+        click.echo(f"PAYROLL_KEY={generate_key()}")
+        click.echo("")
+        click.echo(
+            "Keep it with your other secrets and back it up separately from "
+            "the database. Without it, stored pay rates cannot be read back."
+        )
+
     @app.cli.command("rebuild-index")
     def rebuild_index_command() -> None:
         """Reload the in-memory face index from the database."""

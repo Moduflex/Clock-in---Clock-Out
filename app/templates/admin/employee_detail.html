@@ -34,6 +34,39 @@
     </p>
 </div>
 
+<h2>Pay and hours</h2>
+<div class="mf-card">
+    <div class="mf-table-wrap">
+        <table class="mf-table">
+            <tbody>
+                <tr>
+                    <th style="text-align: left;">Shift</th>
+                    <td>{{ employee.shift_pattern.label if employee.shift_pattern else 'Default shift' }}</td>
+                </tr>
+                <tr>
+                    <th style="text-align: left;">Standard week</th>
+                    <td>{% if employee.working_week %}{{ employee.working_week.hours_text }} hours
+                        {% else %}Default{% endif %}</td>
+                </tr>
+                <tr>
+                    <th style="text-align: left;">Basic rate</th>
+                    <td>{% if basic_rate %}&pound;{{ basic_rate }} per hour
+                        {% else %}<span class="mf-note">Not recorded</span>{% endif %}</td>
+                </tr>
+                <tr>
+                    <th style="text-align: left;">O/T 1.50 rate</th>
+                    <td>{% if overtime_rate %}&pound;{{ overtime_rate }} per hour
+                        {% else %}<span class="mf-note">Not recorded</span>{% endif %}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="mf-note" style="margin-bottom: 0;">Rates are held encrypted in the database and
+        feed the <a href="{{ url_for('admin.timesheets', employee_id=employee.id) }}">payroll
+        master sheet</a>. <a href="{{ url_for('admin.employee_edit', employee_id=employee.id) }}">Edit
+        details</a> to change them.</p>
+</div>
+
 <h2>Fingerprints</h2>
 <div class="mf-card">
     {% if employee.fingerprints %}

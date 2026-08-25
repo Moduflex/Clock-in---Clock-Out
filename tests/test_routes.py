@@ -604,6 +604,105 @@ def test_master_sheet_csv_downloads(logged_in, db):
     assert b"Paid hours" in response.data
 
 
+def test_payroll_master_sheet_downloads_as_a_workbook(logged_in, db):
+    import io
+
+    import openpyxl
+
+    make_employee(db, ref="519", first="Abu", last="Saab", department="Wood Shop")
+    response = logged_in.get(
+        "/admin/timesheets/master.xlsx?start=2026-08-17&end=2026-09-13"
+    )
+    assert response.status_code == 200
+    assert "spreadsheetml" in response.headers["Content-Type"]
+    assert "master_sheet_period_6" in response.headers["Content-Disposition"]
+
+    sheet = openpyxl.load_workbook(io.BytesIO(response.data))["Sheet1"]
+    assert sheet["A2"].value == "Four Weekly Payroll"
+    assert sheet["B4"].value == 6
+    assert sheet["A10"].value == "Abu"
+    assert sheet["O10"].value == "=J10+K10+M10"
+
+
+def test_the_period_number_can_be_overridden_on_the_url(logged_in, db):
+    make_employee(db, ref="519")
+    response = logged_in.get(
+        "/admin/timesheets/master.xlsx?start=2026-08-17&end=2026-09-13&period=9"
+    )
+    assert response.status_code == 200
+    assert "master_sheet_period_9" in response.headers["Content-Disposition"]
+
+
+def test_pay_rates_save_and_come_back_on_the_edit_form(logged_in, db):
+    from app.models import Employee
+
+    employee = make_employee(db, ref="E900", first="Rate", last="Tester")
+    response = logged_in.post(
+        f"/admin/employees/{employee.id}/edit",
+        data={
+            "payroll_ref": "E900",
+            "first_name": "Rate",
+            "last_name": "Tester",
+            "department": "",
+            "email": "",
+            "shift_pattern_id": "0",
+            "working_week_id": "0",
+            "basic_rate": "14.50",
+            "overtime_rate": "21.75",
+            "is_active": "y",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    saved = db.session.get(Employee, employee.id)
+    assert str(saved.basic_rate) == "14.5000"
+    assert str(saved.overtime_rate) == "21.7500"
+    # Held as ciphertext, never as a readable number.
+    assert b"14.5" not in saved.basic_rate_enc
+
+    form = logged_in.get(f"/admin/employees/{employee.id}/edit")
+    assert b'value="14.50"' in form.data
+
+
+def test_a_nonsense_pay_rate_is_refused_without_saving_anything(logged_in, db):
+    from app.models import Employee
+
+    employee = make_employee(db, ref="E901", first="Bad", last="Rate")
+    response = logged_in.post(
+        f"/admin/employees/{employee.id}/edit",
+        data={
+            "payroll_ref": "E901",
+            "first_name": "Bad",
+            "last_name": "Rate",
+            "department": "",
+            "email": "",
+            "shift_pattern_id": "0",
+            "working_week_id": "0",
+            "basic_rate": "14.50",
+            "overtime_rate": "not a number",
+            "is_active": "y",
+        },
+    )
+    assert response.status_code == 200
+    assert b"Enter a rate like" in response.data
+    # Neither rate was kept: a typo in one box must not half-save the other.
+    saved = db.session.get(Employee, employee.id)
+    assert saved.basic_rate is None
+    assert saved.overtime_rate is None
+
+
+def test_the_employee_card_shows_the_rates(logged_in, db):
+    employee = make_employee(db, ref="E902", first="Card", last="Reader")
+    employee.basic_rate = "14.50"
+    db.session.commit()
+
+    response = logged_in.get(f"/admin/employees/{employee.id}")
+    assert response.status_code == 200
+    assert b"14.50" in response.data
+    assert b"Not recorded" in response.data  # the overtime rate is unset
+
+
 def test_duplicate_payroll_ref_is_rejected(logged_in, db):
     make_employee(db, ref="E001")
     response = logged_in.post(

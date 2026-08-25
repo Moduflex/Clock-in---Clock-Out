@@ -157,6 +157,12 @@ class Employee(db.Model):
     working_week_id: Mapped[int | None] = mapped_column(
         ForeignKey("working_week.id", ondelete="SET NULL")
     )
+    # Hourly pay rates, held as ciphertext rather than as numbers - see
+    # services/payrates.py for the key handling and for why this is encrypted
+    # and not hashed. Read them through the basic_rate / overtime_rate
+    # properties, which never raise on a bad key.
+    basic_rate_enc: Mapped[bytes | None] = mapped_column(LargeBinary(256))
+    overtime_rate_enc: Mapped[bytes | None] = mapped_column(LargeBinary(256))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
     templates: Mapped[list["FaceTemplate"]] = relationship(
@@ -181,6 +187,35 @@ class Employee(db.Model):
     @property
     def is_enrolled(self) -> bool:
         return len(self.templates) > 0
+
+    # --- pay rates ---------------------------------------------------------
+    # Imported inside the properties: payrates reaches for the application
+    # config, and models.py is imported while the application is being built.
+    @property
+    def basic_rate(self):
+        """Hourly basic rate as a Decimal, or None if none is recorded."""
+        from .services.payrates import decrypt_rate
+
+        return decrypt_rate(self.basic_rate_enc)
+
+    @basic_rate.setter
+    def basic_rate(self, value) -> None:
+        from .services.payrates import encrypt_rate
+
+        self.basic_rate_enc = encrypt_rate(value)
+
+    @property
+    def overtime_rate(self):
+        """Hourly overtime (O/T 1.50) rate as a Decimal, or None."""
+        from .services.payrates import decrypt_rate
+
+        return decrypt_rate(self.overtime_rate_enc)
+
+    @overtime_rate.setter
+    def overtime_rate(self, value) -> None:
+        from .services.payrates import encrypt_rate
+
+        self.overtime_rate_enc = encrypt_rate(value)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<Employee {self.payroll_ref} {self.full_name}>"

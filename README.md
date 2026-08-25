@@ -37,6 +37,11 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
   looks different from a fifth. Defaults to today, filterable by department. A
   night shift started yesterday counts as on site rather than absent, and a past
   day is judged at its own midnight rather than against the clock now.
+- Payroll master sheet (Excel): the four-weekly wage sheet in the office's own
+  workbook layout &mdash; same columns, banding and colour coding, so nothing
+  downstream changes. See [The payroll master sheet](#the-payroll-master-sheet).
+- Pay rates: an hourly basic and O/T 1.50 rate on each employee's card, held
+  **encrypted** so a database dump does not list what anybody earns.
 - Timesheets: date range (defaults to the last four whole weeks), department and
   per-employee filters, clocked and paid hours per shift, standard and overtime
   hours per person, a week-by-week breakdown, day-by-day drill-down, and three
@@ -335,6 +340,103 @@ without it a Hello dongle cannot be used for clocking at all.
 **Better hardware, if you get the choice.** A reader that matches on-device and
 reports a slot number (R307 and similar, around £15) has neither the ten-person
 limit nor the shared-login problem, and needs no elevation.
+
+---
+
+## The payroll master sheet
+
+**Timesheets &rarr; Payroll master sheet (Excel)** produces the four-weekly wage
+sheet in the layout the office already sends to payroll &mdash; the same columns,
+merged group headings, borders and yellow/amber input shading as the workbook it
+was modelled on. Nothing downstream has to change.
+
+The point of it is that almost nothing is retyped. What fills in where:
+
+| Column | Where it comes from |
+|---|---|
+| Forename, Surname, Department, Payroll Ref | The employee record |
+| Basic (F), O/T 1.50 (H) &mdash; *rates* | The employee's card, if a rate is recorded; blank otherwise |
+| Basic (J), O/T 1.50 (K) &mdash; *hours* | The clock, split standard/overtime week by week |
+| Holiday (M), SSP Days (Q) | Typed in |
+| Back Pay (W), Adjustments (X), Deductions (Y) | Typed in |
+| Total Hours (O) | `=J+K+M` |
+| Basic (S), O/T 1.50 (U), Holiday (V) &mdash; *pay* | `=J*F`, `=K*H`, `=M*F` |
+| TOTAL PAY (Z) | `=S+U+V+W+X-Y` |
+| Notes (AD) | Any timesheet warning, e.g. a missed clock-out |
+| Start / leaving dates (AB, AC) | Typed in |
+
+Because those are live formulas and not numbers, typing a holiday figure or
+correcting a rate re-totals the row in front of whoever is checking it.
+
+Points worth knowing:
+
+- **Everybody active gets a row**, including anyone who clocked nothing in the
+  period &mdash; payroll still has to put their holiday or sick days somewhere, and
+  a name silently missing from a wage sheet is how somebody ends up unpaid. To
+  drop somebody from the sheet, untick Active on their record; their history is
+  kept either way.
+- **A missing rate leaves the cell blank, not zero.** A blank prompts payroll to
+  type the rate; a zero would quietly pay nothing. Nothing here ever guesses a
+  wage, the same rule the timesheet follows for a missing standard week.
+- **The O/T column is the time-and-a-half rate itself**, as its "O/T 1.50"
+  heading says &mdash; overtime pay is hours &times; that rate, with no extra
+  multiplier hidden in the formula.
+- **SSP sits outside TOTAL PAY.** The sheet records the number of days, not a
+  rate, so statutory sick pay is settled by the payroll bureau.
+- **Period and dates** fill in automatically. Four-weekly periods are counted
+  from `PAYROLL_PERIOD_1_START` in `.env` (the Monday period 1 began), so
+  17/08/26&ndash;13/09/26 comes out as period 6. Add `&period=9` to the URL to
+  override it.
+
+### Pay rates are encrypted, not hashed
+
+The hourly rates on the employee card are stored as ciphertext. The key lives in
+`.env` as `PAYROLL_KEY`, never in the database, so a stolen backup or a `.sql`
+dump reveals no wages.
+
+They are **encrypted rather than hashed deliberately.** A hash is one way: a
+hashed rate could never be shown back on the card or multiplied by anybody's
+hours, which is the entire purpose of storing it. Worse, it would not even be
+secret &mdash; an hourly rate has only a few thousand plausible values, so every
+one of them can be hashed and compared in well under a second. Hashing would
+destroy the feature and buy nothing. Encryption gives the property actually
+wanted: unreadable in the database, readable by the application.
+
+Generate a key before going live:
+
+```bash
+flask --app wsgi payroll-key      # prints a line to paste into .env
+```
+
+Leave `PAYROLL_KEY` blank and one is derived from `SECRET_KEY` so a fresh install
+works out of the box &mdash; but rotating `SECRET_KEY` then makes every stored rate
+unreadable. Set a real one in production, keep it with your other secrets, and
+**back it up separately from the database**: without it the rates cannot be
+recovered. If the key ever does change, the rate simply shows as blank rather
+than taking the page down.
+
+### Importing the staff list
+
+`scripts/import_staff.py` loads the payroll list into the employee table:
+
+```bash
+python scripts/import_staff.py --dry-run     # show what would change
+python scripts/import_staff.py               # write it
+python scripts/import_staff.py --file Format.xlsx    # read from the workbook
+```
+
+Everyone is created on the **default shift and default standard week** (07:30&ndash;16:00
+and 40 hours out of the box) by leaving both keys NULL, so changing either
+default later moves everybody who has not been given one of their own. Re-running
+is safe: people are matched on payroll reference, so nobody is created twice.
+
+One case it handles rather than blunders into: somebody enrolled during testing
+already exists under a made-up reference like `test7`. Creating a second record
+for them would be worse than it looks &mdash; the face index would clock them onto
+the *old* record while payroll reads the new one, so their hours would silently
+go missing. The import reports the clash and skips them; `--adopt` moves the
+existing record onto the payroll reference instead, keeping their face enrolment
+and clocking history.
 
 ---
 
@@ -932,6 +1034,9 @@ already states intent.
 | `app/services/attendance.py` | Alternation and cooldown rules, and the daily present/absent split. |
 | `app/services/enrolment.py` | Enrolment with same-person and duplicate checks. |
 | `app/services/timesheet.py` | Pairing events into shifts, paid hours, Monday–Sunday weeks, the standard/overtime split, CSV, timezones. |
+| `app/services/payroll_sheet.py` | The four-weekly master sheet: the payroll workbook's layout, and its live formulas. |
+| `app/services/payrates.py` | Encrypted hourly rates, and the key handling behind them. |
+| `scripts/import_staff.py` | Loading the payroll staff list into the employee table. |
 | `scripts/fingerprint_reader.py` | Agent that reads a fingerprint reader and posts matches. |
 | `app/blueprints/` | Kiosk, auth and admin routes. |
 | `app/security.py` | Rate limiting and the kiosk shared secret. |

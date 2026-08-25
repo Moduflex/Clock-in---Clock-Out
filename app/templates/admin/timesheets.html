@@ -37,6 +37,10 @@
             </select>
         </div>
         <button class="mf-btn" type="submit">Show</button>
+        <a class="mf-btn"
+           href="{{ url_for('admin.timesheets_master_xlsx', start=start.isoformat(), end=end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
+            Payroll master sheet (Excel)
+        </a>
         <a class="mf-btn mf-btn-secondary"
            href="{{ url_for('admin.timesheets_master_csv', start=start.isoformat(), end=end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
             Master sheet (CSV)

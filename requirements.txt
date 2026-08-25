@@ -19,6 +19,9 @@ bcrypt>=4.2
 opencv-python-headless>=4.10
 numpy>=2.0
 
+# The payroll master sheet is a real .xlsx workbook with live formulas
+openpyxl>=3.1
+
 # Config + production server
 python-dotenv==1.1.1
 waitress==3.0.2

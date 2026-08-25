@@ -46,6 +46,12 @@ from ..models import (
 )
 from ..services import attendance
 from ..services.enrolment import enrol_employee, remove_enrolment
+from ..services.payrates import PayRateError, parse_rate, rate_text
+from ..services.payroll_sheet import (
+    payroll_period,
+    sheet_employees,
+    to_master_xlsx,
+)
 from ..services.recognition import get_index
 from ..services.timesheet import (
     build_timesheet,
@@ -87,6 +93,10 @@ class EmployeeForm(FlaskForm):
     working_week_id = SelectField(
         "Standard working hours per week", coerce=int, validators=[Optional()]
     )
+    # Free text rather than a DecimalField so "14.50", "£14.50" and a blank all
+    # behave; parse_rate does the validating and reports one clear message.
+    basic_rate = StringField("Basic rate (£ per hour)", validators=[Optional()])
+    overtime_rate = StringField("O/T 1.50 rate (£ per hour)", validators=[Optional()])
     is_active = BooleanField("Active", default=True)
 
 
@@ -206,6 +216,28 @@ def _employee_choices() -> list[tuple[int, str]]:
         .order_by(Employee.last_name, Employee.first_name)
     ).all()
     return [(e.id, f"{e.last_name}, {e.first_name} ({e.payroll_ref})") for e in employees]
+
+
+def _apply_pay_rates(form: EmployeeForm, employee: Employee) -> bool:
+    """Put the typed rates onto *employee*, reporting a bad one on its field.
+
+    Both are set together or neither is, so a typo in the overtime box cannot
+    leave the basic rate saved and the overtime rate silently dropped.
+    """
+    try:
+        basic = parse_rate(form.basic_rate.data)
+    except PayRateError as exc:
+        _field_error(form.basic_rate, str(exc))
+        return False
+    try:
+        overtime = parse_rate(form.overtime_rate.data)
+    except PayRateError as exc:
+        _field_error(form.overtime_rate, str(exc))
+        return False
+
+    employee.basic_rate = basic
+    employee.overtime_rate = overtime
+    return True
 
 
 def _shift_choices() -> list[tuple[int, str]]:
@@ -336,6 +368,8 @@ def employee_new():
             working_week_id=form.working_week_id.data or None,
             is_active=bool(form.is_active.data),
         )
+        if not _apply_pay_rates(form, employee):
+            return render_template("admin/employee_form.html", form=form, employee=None)
         db.session.add(employee)
         db.session.commit()
         flash(f"Added {employee.full_name}. Now enrol their face.", "success")
@@ -353,6 +387,9 @@ def employee_edit(employee_id: int):
     if request.method == "GET":
         form.shift_pattern_id.data = employee.shift_pattern_id or 0
         form.working_week_id.data = employee.working_week_id or 0
+        # The stored columns are ciphertext, so obj= cannot fill these in.
+        form.basic_rate.data = rate_text(employee.basic_rate)
+        form.overtime_rate.data = rate_text(employee.overtime_rate)
     if form.validate_on_submit():
         clash = db.session.scalars(
             select(Employee).where(
@@ -371,6 +408,11 @@ def employee_edit(employee_id: int):
         employee.shift_pattern_id = form.shift_pattern_id.data or None
         employee.working_week_id = form.working_week_id.data or None
         employee.is_active = bool(form.is_active.data)
+        if not _apply_pay_rates(form, employee):
+            db.session.rollback()
+            return render_template(
+                "admin/employee_form.html", form=form, employee=employee
+            )
         db.session.commit()
         flash(f"Updated {employee.full_name}.", "success")
         return redirect(url_for("admin.employees"))
@@ -391,6 +433,8 @@ def employee_detail(employee_id: int):
         "admin/employee_detail.html",
         employee=employee,
         events=events,
+        basic_rate=rate_text(employee.basic_rate),
+        overtime_rate=rate_text(employee.overtime_rate),
         void_form=VoidForm(),
         finger_form=FingerprintForm(
             device_label=current_app.config["KIOSK_DEVICE_LABEL"]
@@ -617,6 +661,47 @@ def timesheets_master_csv():
     return Response(
         to_master_csv(summarise(shifts)),
         mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@bp.get("/timesheets/master.xlsx")
+def timesheets_master_xlsx():
+    """The four-weekly master sheet in the payroll workbook's own layout.
+
+    Everyone active appears, whether or not they clocked anything, and the
+    right-hand pay columns are Excel formulas rather than numbers - see
+    services/payroll_sheet.py.
+    """
+    start, end, employee_id, department, tz = _timesheet_args()
+    shifts = build_timesheet(
+        start, end, tz, employee_id=employee_id, department=department
+    )
+    anchor = _parse_date(
+        current_app.config["PAYROLL_PERIOD_1_START"], dt.date(2026, 3, 30)
+    )
+    periods = current_app.config["PAYROLL_PERIODS_PER_YEAR"]
+    raw_period = request.args.get("period")
+    period = (
+        int(raw_period)
+        if raw_period and raw_period.isdigit()
+        else payroll_period(start, anchor, periods)
+    )
+
+    workbook = to_master_xlsx(
+        summarise(shifts),
+        start,
+        end,
+        employees=sheet_employees(employee_id=employee_id, department=department),
+        period=period,
+        company_name=current_app.config["PAYROLL_COMPANY_NAME"],
+    )
+    filename = f"master_sheet_period_{period}_{start.isoformat()}.xlsx"
+    return Response(
+        workbook,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
