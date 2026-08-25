@@ -254,6 +254,7 @@ def test_admin_pages_render(logged_in, db):
         f"/admin/employees/{employee.id}",
         f"/admin/employees/{employee.id}/edit",
         f"/admin/employees/{employee.id}/enrol",
+        "/admin/absence",
         "/admin/timesheets",
         "/admin/shifts",
         "/admin/events/manual",
@@ -261,6 +262,41 @@ def test_admin_pages_render(logged_in, db):
     ):
         response = logged_in.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
+
+
+def test_absence_page_names_who_has_not_clocked_in(logged_in, db):
+    from app.models import DIRECTION_IN, AttendanceEvent, utcnow
+
+    present = make_employee(db, ref="E001", first="Alice", last="Turner")
+    make_employee(db, ref="E002", first="Bob", last="Shaw")
+    db.session.add(
+        AttendanceEvent(
+            employee_id=present.id, direction=DIRECTION_IN, occurred_at=utcnow()
+        )
+    )
+    db.session.commit()
+
+    response = logged_in.get("/admin/absence")
+    assert response.status_code == 200
+    body = response.data.decode()
+    assert "Bob Shaw" in body
+    assert "Not clocked in" in body
+    # Alice is on site, so she must not be listed as an absentee.
+    assert body.index("Not clocked in") < body.index("Bob Shaw")
+
+
+def test_absence_page_accepts_a_past_day(logged_in, db):
+    make_employee(db, ref="E001")
+    response = logged_in.get("/admin/absence?day=2026-01-12")
+    assert response.status_code == 200
+    assert b"Monday 12 January 2026" in response.data
+
+
+def test_absence_page_ignores_a_nonsense_day(logged_in, db):
+    """A hand-edited query string falls back to today rather than erroring."""
+    make_employee(db, ref="E001")
+    response = logged_in.get("/admin/absence?day=not-a-date")
+    assert response.status_code == 200
 
 
 def test_shift_pattern_can_be_added_edited_and_deleted(logged_in, db):

@@ -257,6 +257,39 @@ def dashboard():
 
 
 # --------------------------------------------------------------------------
+# Absence
+# --------------------------------------------------------------------------
+@bp.get("/absence")
+def absence():
+    """Who has not clocked in, for a chosen local day.
+
+    Defaults to today, which is the question actually asked on the shop floor
+    every morning, but any past day can be checked - useful when a supervisor
+    wants to know who was missing last Tuesday.
+    """
+    tz = _tz()
+    today = dt.datetime.now(tz).date()
+    day = _parse_date(request.args.get("day"), today)
+    department = (request.args.get("department") or "").strip() or None
+    records = attendance.daily_presence(day, tz, department=department)
+
+    absent = [r for r in records if r.is_absent and r.is_due]
+    return render_template(
+        "admin/absence.html",
+        day=day,
+        today=today,
+        is_today=day == today,
+        department=department,
+        departments=list_departments(),
+        absent=absent,
+        not_due=[r for r in records if r.is_absent and not r.is_due],
+        on_site=[r for r in records if r.status == attendance.PRESENCE_ON_SITE],
+        left=[r for r in records if r.status == attendance.PRESENCE_LEFT],
+        expected=len(records),
+    )
+
+
+# --------------------------------------------------------------------------
 # Employees
 # --------------------------------------------------------------------------
 @bp.get("/employees")

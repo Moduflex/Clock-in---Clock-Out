@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Absence &mdash; {{ app_name }}{% endblock %}
+
+{% macro name_cells(record) %}
+<td>
+    <a href="{{ url_for('admin.employee_detail', employee_id=record.employee.id) }}">{{ record.employee.full_name }}</a>
+</td>
+<td>{{ record.employee.payroll_ref }}</td>
+<td>{{ record.employee.department or '' }}</td>
+{% endmacro %}
+
+{% block content %}
+<h1>Absence</h1>
+<p class="mf-subtitle">{{ day.strftime('%A %d %B %Y') }} &middot;
+    {{ expected }} active employee(s){% if department %} in {{ department }}{% endif %} &middot;
+    times in {{ timezone_name }}</p>
+
+<div class="mf-card">
+    <form method="get" class="mf-filter-row">
+        <div class="mf-field">
+            <label for="day">Day</label>
+            <input type="date" id="day" name="day" value="{{ day.isoformat() }}" max="{{ today.isoformat() }}">
+        </div>
+        <div class="mf-field">
+            <label for="department">Department</label>
+            <select id="department" name="department">
+                <option value="">All departments</option>
+                {% for dept in departments %}
+                <option value="{{ dept }}" {% if department == dept %}selected{% endif %}>{{ dept }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button class="mf-btn" type="submit">Show</button>
+        {% if not is_today or department %}
+        <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.absence') }}">Today</a>
+        {% endif %}
+        <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.event_manual') }}">Add a missed clocking</a>
+    </form>
+</div>
+
+<div class="mf-grid">
+    <div class="mf-stat">
+        <div class="mf-stat-value">{{ absent | length }}</div>
+        <div class="mf-stat-label">Not clocked in</div>
+    </div>
+    <div class="mf-stat">
+        <div class="mf-stat-value">{{ not_due | length }}</div>
+        <div class="mf-stat-label">Not due yet</div>
+    </div>
+    <div class="mf-stat">
+        <div class="mf-stat-value">{{ on_site | length }}</div>
+        <div class="mf-stat-label">{{ 'On site now' if is_today else 'Never clocked out' }}</div>
+    </div>
+    <div class="mf-stat">
+        <div class="mf-stat-value">{{ left | length }}</div>
+        <div class="mf-stat-label">Clocked out</div>
+    </div>
+</div>
+
+<div class="mf-card">
+    <h2 style="margin-top: 0;">Not clocked in</h2>
+    {% if absent %}
+    <div class="mf-table-wrap">
+        <table class="mf-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Payroll ref</th>
+                    <th>Department</th>
+                    <th>Due to start</th>
+                    <th>Overdue by</th>
+                    <th>Last clocking</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in absent %}
+                <tr>
+                    {{ name_cells(record) }}
+                    <td>
+                        {% if record.expected_start %}{{ record.expected_start | localtime('%H:%M') }}
+                        {% else %}<span class="mf-note">No shift set</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if record.overdue_text %}
+                        <span class="mf-badge mf-badge-warn">{{ record.overdue_text }}</span>
+                        {% else %}&mdash;{% endif %}
+                    </td>
+                    <td>
+                        {% if record.last_seen %}{{ record.last_seen | localtime }}
+                        {% else %}<span class="mf-badge mf-badge-danger">Never</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="mf-note">Anyone who was here but forgot to scan can be put right on the
+        <a href="{{ url_for('admin.event_manual') }}">manual entry</a> page. Only active
+        employees are counted, so a leaver never shows up as absent.</p>
+    {% else %}
+    <p class="mf-empty">
+        {% if is_today %}Everyone due in so far today has clocked in.
+        {% else %}Everyone due in that day clocked in.{% endif %}
+    </p>
+    {% endif %}
+</div>
+
+{% if not_due %}
+<div class="mf-card">
+    <h2 style="margin-top: 0;">Not due yet</h2>
+    <div class="mf-table-wrap">
+        <table class="mf-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Payroll ref</th>
+                    <th>Department</th>
+                    <th>Due to start</th>
+                    <th>Last clocking</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in not_due %}
+                <tr>
+                    {{ name_cells(record) }}
+                    <td>{{ record.expected_start | localtime('%H:%M') }}</td>
+                    <td>
+                        {% if record.last_seen %}{{ record.last_seen | localtime }}
+                        {% else %}<span class="mf-badge mf-badge-danger">Never</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="mf-note">Their shift has not started yet, so not having clocked in is expected.</p>
+</div>
+{% endif %}
+
+<div class="mf-card">
+    <h2 style="margin-top: 0;">{{ 'On site now' if is_today else 'Still clocked in at midnight' }}</h2>
+    {% if on_site %}
+    <div class="mf-table-wrap">
+        <table class="mf-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Payroll ref</th>
+                    <th>Department</th>
+                    <th>Clocked in</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in on_site %}
+                <tr>
+                    {{ name_cells(record) }}
+                    <td>
+                        {% if record.first_in %}{{ record.first_in | localtime('%H:%M') }}
+                        {% else %}<span class="mf-badge mf-badge-warn">Before this day</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if not is_today %}
+    <p class="mf-note">No clock-out was recorded before midnight: either a shift running into
+        the next day, or a missed scan.</p>
+    {% endif %}
+    {% else %}
+    <p class="mf-empty">Nobody is clocked in.</p>
+    {% endif %}
+</div>
+
+<div class="mf-card">
+    <h2 style="margin-top: 0;">Clocked out</h2>
+    {% if left %}
+    <div class="mf-table-wrap">
+        <table class="mf-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Payroll ref</th>
+                    <th>Department</th>
+                    <th>First in</th>
+                    <th>Last out</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in left %}
+                <tr>
+                    {{ name_cells(record) }}
+                    <td>
+                        {% if record.first_in %}{{ record.first_in | localtime('%H:%M') }}
+                        {% else %}<span class="mf-note">Before this day</span>{% endif %}
+                    </td>
+                    <td>{{ record.last_out | localtime('%H:%M') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="mf-empty">Nobody has clocked out {{ 'yet today' if is_today else 'that day' }}.</p>
+    {% endif %}
+</div>
+{% endblock %}

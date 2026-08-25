@@ -30,6 +30,13 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Fingerprints: register which slot on which reader belongs to whom. The
   reader keeps the fingerprint and does the matching; this system stores no
   biometric data for fingerprints at all, only the slot number.
+- Absence: who has not clocked in, for any day. The active list is sorted into
+  not clocked in, not due yet (their shift starts later, so nothing is wrong),
+  on site, and clocked out — with how overdue each absentee is against their
+  shift start and when they last clocked anything, so a first missed morning
+  looks different from a fifth. Defaults to today, filterable by department. A
+  night shift started yesterday counts as on site rather than absent, and a past
+  day is judged at its own midnight rather than against the clock now.
 - Timesheets: date range (defaults to the last four whole weeks), department and
   per-employee filters, clocked and paid hours per shift, standard and overtime
   hours per person, a week-by-week breakdown, day-by-day drill-down, and three
@@ -922,7 +929,7 @@ already states intent.
 | `app/face/matcher.py` | The in-memory index and the threshold/margin/voting rules. |
 | `app/face/liveness.py` | The presentation-attack deterrent. |
 | `app/services/recognition.py` | Ties the engine and index to Flask and MySQL. |
-| `app/services/attendance.py` | Alternation and cooldown rules. |
+| `app/services/attendance.py` | Alternation and cooldown rules, and the daily present/absent split. |
 | `app/services/enrolment.py` | Enrolment with same-person and duplicate checks. |
 | `app/services/timesheet.py` | Pairing events into shifts, paid hours, Monday–Sunday weeks, the standard/overtime split, CSV, timezones. |
 | `scripts/fingerprint_reader.py` | Agent that reads a fingerprint reader and posts matches. |
