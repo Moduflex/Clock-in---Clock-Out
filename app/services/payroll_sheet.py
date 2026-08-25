@@ -12,20 +12,25 @@ number.**
     From the clock       Forename, Surname, Department, Payroll ref,
                          Basic hours (J), O/T hours (K), and any timesheet
                          warning in Notes.
-    From the database    Basic rate (F) and O/T 1.50 rate (H), when a rate has
-                         been recorded on the employee's card. Blank otherwise -
-                         a wage is never guessed.
+    From the database    Basic rate (F), when one has been recorded on the
+                         employee's card. Blank otherwise - a wage is never
+                         guessed.
     Typed in             Holiday hours (M), SSP days (Q), Back pay (W),
                          Adjustments (X), Deductions (Y), start and leaving
                          dates.
-    Excel works out      Total hours (O), Basic pay (S), O/T pay (U), Holiday
-                         pay (V) and TOTAL PAY (Z).
+    Excel works out      The O/T 1.50 rate (H), Total hours (O), Basic pay (S),
+                         O/T pay (U), Holiday pay (V) and TOTAL PAY (Z).
 
 Because the right-hand columns are live formulas, correcting a rate or typing a
 holiday figure re-totals the sheet in front of whoever is checking it; nobody
-retypes a number that Excel can work out. The O/T rate column is the 1.5x rate
-itself, as the "O/T 1.50" heading says, so overtime pay is hours x that rate
-with no further multiplier hidden in the formula.
+retypes a number that Excel can work out.
+
+The one rate on the sheet is the basic one, in column F. The "O/T 1.50" rate in
+column H is ``=F*1.5``, not a second figure to keep in step - so a rise typed
+into F carries straight through to overtime, and the two can never disagree.
+That formula is written on every row, including rows where no basic rate is
+recorded yet: it is the rule rather than a value, so typing a rate into F in
+Excel produces the overtime rate without anybody touching column H.
 
 SSP is deliberately outside TOTAL PAY: the sheet records the number of days, not
 a rate, and statutory sick pay is settled by the payroll bureau.
@@ -41,6 +46,7 @@ from sqlalchemy import select
 
 from ..extensions import db
 from ..models import Employee, visible_employee_clause
+from .payrates import OVERTIME_MULTIPLIER
 from .timesheet import EmployeeTotal
 
 # --- the layout, one entry per column -------------------------------------
@@ -330,14 +336,14 @@ def build_master_workbook(
         reference = employee.payroll_ref
         sheet[f"D{row}"] = int(reference) if reference.isdigit() else reference
 
-        # Rates, only where one has actually been recorded. A blank here is a
-        # prompt to type the rate in, not a zero to be paid.
+        # The basic rate, only where one has actually been recorded. A blank
+        # here is a prompt to type the rate in, not a zero to be paid.
         basic_rate = employee.basic_rate
-        overtime_rate = employee.overtime_rate
         if basic_rate is not None:
             sheet[f"F{row}"] = float(basic_rate)
-        if overtime_rate is not None:
-            sheet[f"H{row}"] = float(overtime_rate)
+        # Overtime is always time and a half on whatever ends up in F, so this
+        # is written whether or not a rate is on file yet.
+        sheet[f"H{row}"] = f"=F{row}*{OVERTIME_MULTIPLIER:g}"
 
         # Hours to pay, from the clock. Somebody with no shifts still gets a
         # row, with zeroes, so holiday or sick days can be entered against it.

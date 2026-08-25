@@ -35,20 +35,17 @@
             standard week decides where overtime starts: hours worked beyond it in a
             Monday&ndash;Sunday week are reported as overtime.</p>
 
-        <h2 style="font-size: 1.1rem;">Pay rates</h2>
-        <div class="mf-filter-row">
-            {% for field in [form.basic_rate, form.overtime_rate] %}
-            <div class="mf-field">
-                {{ field.label }}
-                {{ field(placeholder="e.g. 14.50", inputmode="decimal", autocomplete="off") }}
-                {% for error in field.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
-            </div>
-            {% endfor %}
+        <h2 style="font-size: 1.1rem;">Pay rate</h2>
+        <div class="mf-field">
+            {{ form.basic_rate.label }}
+            {{ form.basic_rate(placeholder="e.g. 14.50", inputmode="decimal", autocomplete="off") }}
+            {% for error in form.basic_rate.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
         </div>
-        <p class="mf-note">Both are stored <strong>encrypted</strong>, so a database backup does
-            not list what anybody earns. Enter the O/T column as the time-and-a-half rate itself
-            (basic &times; 1.5), which is what the payroll sheet&rsquo;s &ldquo;O/T 1.50&rdquo;
-            heading means. Leave either blank and the payroll sheet leaves that cell empty for
+        <p class="mf-note">The basic hourly rate is the only one to enter. Overtime is worked out
+            from it at time and a half &mdash; the payroll sheet&rsquo;s &ldquo;O/T 1.50&rdquo;
+            column is a formula, so a rise only has to be typed once and the two can never
+            disagree. The rate is stored <strong>encrypted</strong>, so a database backup does not
+            list what anybody earns. Left blank, the payroll sheet leaves the rate cell empty for
             manual entry rather than paying a guessed rate.</p>
 
         <div class="mf-field mf-checkbox">

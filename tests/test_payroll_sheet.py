@@ -206,6 +206,7 @@ def test_the_right_hand_columns_are_formulas_not_typed_numbers(payroll_db):
     sheet = _sheet(payroll_db)
     row = FIRST_DATA_ROW
 
+    assert sheet[f"H{row}"].value == f"=F{row}*1.5"
     assert sheet[f"O{row}"].value == f"=J{row}+K{row}+M{row}"
     assert sheet[f"S{row}"].value == f"=J{row}*F{row}"
     assert sheet[f"U{row}"].value == f"=K{row}*H{row}"
@@ -217,7 +218,6 @@ def test_the_formulas_add_up(payroll_db):
     """Worked by hand the way Excel will, so a wrong formula is caught here."""
     employee = make_employee(payroll_db, ref="519")
     employee.basic_rate = "14.50"
-    employee.overtime_rate = "21.75"
     payroll_db.session.commit()
     for day in range(5):
         _work(payroll_db, employee, PERIOD_START + dt.timedelta(days=day), 6, 17)
@@ -225,7 +225,7 @@ def test_the_formulas_add_up(payroll_db):
     sheet = _sheet(payroll_db)
     row = FIRST_DATA_ROW
     basic_rate = sheet[f"F{row}"].value
-    overtime_rate = sheet[f"H{row}"].value
+    overtime_rate = basic_rate * 1.5  # what =F*1.5 evaluates to
     basic_hours = sheet[f"J{row}"].value
     overtime_hours = sheet[f"K{row}"].value
     holiday, back_pay, adjustments, deductions = 8.0, 0.0, 0.0, 12.40
@@ -246,23 +246,46 @@ def test_the_formulas_add_up(payroll_db):
 
 
 # --- pay rates ----------------------------------------------------------------
-def test_a_recorded_rate_is_written_into_the_rates_columns(payroll_db):
+def test_the_recorded_basic_rate_is_written_into_column_f(payroll_db):
     employee = make_employee(payroll_db, ref="519")
     employee.basic_rate = "14.50"
-    employee.overtime_rate = "21.75"
+    payroll_db.session.commit()
+
+    assert _sheet(payroll_db)[f"F{FIRST_DATA_ROW}"].value == pytest.approx(14.50)
+
+
+def test_the_overtime_rate_is_a_formula_off_the_basic_one(payroll_db):
+    """Column H is the rule, not a second figure to keep in step."""
+    employee = make_employee(payroll_db, ref="519")
+    employee.basic_rate = "14.50"
     payroll_db.session.commit()
 
     sheet = _sheet(payroll_db)
-    assert sheet[f"F{FIRST_DATA_ROW}"].value == pytest.approx(14.50)
-    assert sheet[f"H{FIRST_DATA_ROW}"].value == pytest.approx(21.75)
+    assert sheet[f"H{FIRST_DATA_ROW}"].value == f"=F{FIRST_DATA_ROW}*1.5"
+    # 14.50 x 1.5 = 21.75, which is what Excel will show.
+    assert sheet[f"F{FIRST_DATA_ROW}"].value * 1.5 == pytest.approx(21.75)
 
 
-def test_no_recorded_rate_leaves_the_cell_blank_rather_than_zero(payroll_db):
+def test_no_recorded_rate_leaves_the_basic_cell_blank_rather_than_zero(payroll_db):
     """A blank prompts payroll to type the rate. A zero would pay nothing."""
+    make_employee(payroll_db, ref="519")
+    assert _sheet(payroll_db)[f"F{FIRST_DATA_ROW}"].value is None
+
+
+def test_the_overtime_formula_is_written_even_with_no_rate_on_file(payroll_db):
+    """So typing a rate into F in Excel fills in the overtime rate by itself."""
     make_employee(payroll_db, ref="519")
     sheet = _sheet(payroll_db)
     assert sheet[f"F{FIRST_DATA_ROW}"].value is None
-    assert sheet[f"H{FIRST_DATA_ROW}"].value is None
+    assert sheet[f"H{FIRST_DATA_ROW}"].value == f"=F{FIRST_DATA_ROW}*1.5"
+
+
+def test_the_rates_band_keeps_only_column_f_as_an_input(payroll_db):
+    """F is yellow because it is typed in; H is a formula, so it is not."""
+    make_employee(payroll_db, ref="519")
+    sheet = _sheet(payroll_db)
+    assert sheet[f"F{FIRST_DATA_ROW}"].fill.start_color.rgb == "FFFFFF00"
+    assert sheet[f"H{FIRST_DATA_ROW}"].fill.fill_type is None
 
 
 # --- notes --------------------------------------------------------------------

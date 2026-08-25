@@ -56,15 +56,17 @@
                 <tr>
                     <th style="text-align: left;">O/T 1.50 rate</th>
                     <td>{% if overtime_rate %}&pound;{{ overtime_rate }} per hour
-                        {% else %}<span class="mf-note">Not recorded</span>{% endif %}</td>
+                        <span class="mf-note">(basic &times; 1.5)</span>
+                        {% else %}<span class="mf-note">Set a basic rate first</span>{% endif %}</td>
                 </tr>
             </tbody>
         </table>
     </div>
-    <p class="mf-note" style="margin-bottom: 0;">Rates are held encrypted in the database and
-        feed the <a href="{{ url_for('admin.timesheets', employee_id=employee.id) }}">payroll
-        master sheet</a>. <a href="{{ url_for('admin.employee_edit', employee_id=employee.id) }}">Edit
-        details</a> to change them.</p>
+    <p class="mf-note" style="margin-bottom: 0;">The basic rate is held encrypted in the
+        database and feeds the <a href="{{ url_for('admin.timesheets', employee_id=employee.id) }}">payroll
+        master sheet</a>; the overtime rate is worked out from it rather than stored.
+        <a href="{{ url_for('admin.employee_edit', employee_id=employee.id) }}">Edit details</a>
+        to change it.</p>
 </div>
 
 <h2>Fingerprints</h2>

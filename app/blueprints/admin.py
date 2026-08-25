@@ -95,8 +95,8 @@ class EmployeeForm(FlaskForm):
     )
     # Free text rather than a DecimalField so "14.50", "£14.50" and a blank all
     # behave; parse_rate does the validating and reports one clear message.
+    # Only the basic rate is entered - overtime is time and a half on it.
     basic_rate = StringField("Basic rate (£ per hour)", validators=[Optional()])
-    overtime_rate = StringField("O/T 1.50 rate (£ per hour)", validators=[Optional()])
     is_active = BooleanField("Active", default=True)
 
 
@@ -218,25 +218,16 @@ def _employee_choices() -> list[tuple[int, str]]:
     return [(e.id, f"{e.last_name}, {e.first_name} ({e.payroll_ref})") for e in employees]
 
 
-def _apply_pay_rates(form: EmployeeForm, employee: Employee) -> bool:
-    """Put the typed rates onto *employee*, reporting a bad one on its field.
+def _apply_pay_rate(form: EmployeeForm, employee: Employee) -> bool:
+    """Put the typed basic rate onto *employee*, reporting a bad one on its field.
 
-    Both are set together or neither is, so a typo in the overtime box cannot
-    leave the basic rate saved and the overtime rate silently dropped.
+    The overtime rate needs no handling here: it is derived from this one.
     """
     try:
-        basic = parse_rate(form.basic_rate.data)
+        employee.basic_rate = parse_rate(form.basic_rate.data)
     except PayRateError as exc:
         _field_error(form.basic_rate, str(exc))
         return False
-    try:
-        overtime = parse_rate(form.overtime_rate.data)
-    except PayRateError as exc:
-        _field_error(form.overtime_rate, str(exc))
-        return False
-
-    employee.basic_rate = basic
-    employee.overtime_rate = overtime
     return True
 
 
@@ -368,7 +359,7 @@ def employee_new():
             working_week_id=form.working_week_id.data or None,
             is_active=bool(form.is_active.data),
         )
-        if not _apply_pay_rates(form, employee):
+        if not _apply_pay_rate(form, employee):
             return render_template("admin/employee_form.html", form=form, employee=None)
         db.session.add(employee)
         db.session.commit()
@@ -387,9 +378,8 @@ def employee_edit(employee_id: int):
     if request.method == "GET":
         form.shift_pattern_id.data = employee.shift_pattern_id or 0
         form.working_week_id.data = employee.working_week_id or 0
-        # The stored columns are ciphertext, so obj= cannot fill these in.
+        # The stored column is ciphertext, so obj= cannot fill this in.
         form.basic_rate.data = rate_text(employee.basic_rate)
-        form.overtime_rate.data = rate_text(employee.overtime_rate)
     if form.validate_on_submit():
         clash = db.session.scalars(
             select(Employee).where(
@@ -408,7 +398,7 @@ def employee_edit(employee_id: int):
         employee.shift_pattern_id = form.shift_pattern_id.data or None
         employee.working_week_id = form.working_week_id.data or None
         employee.is_active = bool(form.is_active.data)
-        if not _apply_pay_rates(form, employee):
+        if not _apply_pay_rate(form, employee):
             db.session.rollback()
             return render_template(
                 "admin/employee_form.html", form=form, employee=employee

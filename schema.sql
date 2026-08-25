@@ -53,10 +53,11 @@ CREATE TABLE employee (
 	is_active BOOL NOT NULL,
 	shift_pattern_id INTEGER,
 	working_week_id INTEGER,
-	-- Hourly rates, encrypted by the application (Fernet); never plain numbers.
-	-- The key lives in .env as PAYROLL_KEY, so a database dump reveals no wages.
+	-- The basic hourly rate, encrypted by the application (Fernet); never a
+	-- plain number. The key lives in .env as PAYROLL_KEY, so a database dump
+	-- reveals no wages. There is no overtime column: that rate is basic * 1.5,
+	-- worked out on demand so the two can never disagree.
 	basic_rate_enc BLOB(256),
-	overtime_rate_enc BLOB(256),
 	created_at DATETIME NOT NULL,
 	PRIMARY KEY (id),
 	UNIQUE (payroll_ref),
@@ -69,7 +70,9 @@ CREATE TABLE employee (
 --   ALTER TABLE shift_pattern ADD COLUMN break_applies_after_minutes INTEGER NOT NULL DEFAULT 360;
 -- Upgrading a database created before pay rates:
 --   ALTER TABLE employee ADD COLUMN basic_rate_enc BLOB;
---   ALTER TABLE employee ADD COLUMN overtime_rate_enc BLOB;
+-- An overtime_rate_enc column from an earlier build is no longer read; the
+-- overtime rate is derived. Drop it once you are happy nothing needs it:
+--   ALTER TABLE employee DROP COLUMN overtime_rate_enc;
 -- Upgrading a database created before overtime:
 --   (create working_week above, then)
 --   ALTER TABLE employee ADD COLUMN working_week_id INTEGER;

@@ -1,8 +1,14 @@
 """Pay rates, encrypted at rest.
 
+One rate is stored per person: the **basic** hourly rate. The overtime rate is
+not stored at all - it is basic x :data:`OVERTIME_MULTIPLIER`, which is what the
+payroll sheet's "O/T 1.50" heading has always meant. Deriving it removes a whole
+class of error: two numbers that must agree cannot drift apart, and a rise typed
+into the basic rate carries into overtime by itself.
+
 Hourly rates are the most sensitive non-biometric field in this database: a
 leaked backup that lists what everybody earns is a serious problem, and read
-access to MySQL is wider than read access to payroll. So the rate columns hold
+access to MySQL is wider than read access to payroll. So the rate column holds
 ciphertext, not numbers, and the key lives in ``.env`` rather than in the
 database - somebody who walks off with a ``.sql`` dump gets nothing.
 
@@ -25,6 +31,11 @@ import hashlib
 from decimal import Decimal, InvalidOperation
 
 from flask import current_app
+
+# Time and a half. The payroll sheet's "O/T 1.50" column is this multiplier, so
+# it lives here as one named constant rather than as a 1.5 scattered through the
+# code and the spreadsheet formulas.
+OVERTIME_MULTIPLIER = Decimal("1.5")
 
 # Rates are stored to the penny. Four places leaves room for a rate quoted per
 # thousand or an agency uplift without rounding it away at rest.
@@ -125,6 +136,18 @@ def decrypt_rate(blob: bytes | None, *, app=None) -> Decimal | None:
         return Decimal(plain.decode("ascii"))
     except (InvalidOperation, UnicodeDecodeError):
         return None
+
+
+def overtime_from_basic(basic: Decimal | None) -> Decimal | None:
+    """The overtime rate for a basic one: 14.50 -> 21.75. None stays None.
+
+    Not stored anywhere. A missing basic rate gives a missing overtime rate
+    rather than zero - the same rule the rest of payroll follows, because a
+    guessed wage is worse than an obviously blank one.
+    """
+    if basic is None:
+        return None
+    return (basic * OVERTIME_MULTIPLIER).quantize(Decimal(10) ** -RATE_PLACES)
 
 
 def rate_text(value: Decimal | None) -> str:

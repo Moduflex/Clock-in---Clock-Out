@@ -7,10 +7,12 @@ from decimal import Decimal
 import pytest
 
 from app.services.payrates import (
+    OVERTIME_MULTIPLIER,
     PayRateError,
     decrypt_rate,
     encrypt_rate,
     generate_key,
+    overtime_from_basic,
     parse_rate,
     rate_text,
 )
@@ -106,16 +108,14 @@ def test_a_nonsense_key_is_reported_rather_than_silently_ignored(app):
 
 
 # --- on the employee record ---------------------------------------------------
-def test_rates_round_trip_through_the_employee_card(app, db):
+def test_the_basic_rate_round_trips_through_the_employee_card(app, db):
     with app.app_context():
         employee = make_employee(db)
         employee.basic_rate = "14.50"
-        employee.overtime_rate = "21.75"
         db.session.commit()
 
         fresh = db.session.get(type(employee), employee.id)
         assert fresh.basic_rate == Decimal("14.5000")
-        assert fresh.overtime_rate == Decimal("21.7500")
         # And the column really does hold ciphertext.
         assert b"14.5" not in fresh.basic_rate_enc
 
@@ -136,3 +136,55 @@ def test_an_employee_with_no_rate_reads_as_none(db):
     employee = make_employee(db)
     assert employee.basic_rate is None
     assert employee.overtime_rate is None
+
+
+# --- overtime is derived, never stored ----------------------------------------
+def test_overtime_is_time_and_a_half_on_the_basic_rate():
+    assert overtime_from_basic(Decimal("14.50")) == Decimal("21.7500")
+    assert overtime_from_basic(Decimal("12.00")) == Decimal("18.0000")
+    assert OVERTIME_MULTIPLIER == Decimal("1.5")
+
+
+def test_no_basic_rate_means_no_overtime_rate():
+    """Blank stays blank; a derived zero would look like a real wage of nothing."""
+    assert overtime_from_basic(None) is None
+
+
+def test_an_odd_rate_keeps_its_half_penny():
+    """£13.33 x 1.5 is 19.995 - not rounded away before payroll sees it."""
+    assert overtime_from_basic(Decimal("13.33")) == Decimal("19.9950")
+
+
+def test_the_employee_card_derives_its_overtime_rate(app, db):
+    with app.app_context():
+        employee = make_employee(db)
+        employee.basic_rate = "14.50"
+        db.session.commit()
+        assert employee.overtime_rate == Decimal("21.7500")
+
+
+def test_changing_the_basic_rate_moves_the_overtime_rate_with_it(app, db):
+    """The point of deriving it: the two cannot drift apart."""
+    with app.app_context():
+        employee = make_employee(db)
+        employee.basic_rate = "14.50"
+        assert employee.overtime_rate == Decimal("21.7500")
+
+        employee.basic_rate = "16.00"
+        assert employee.overtime_rate == Decimal("24.0000")
+
+
+def test_clearing_the_basic_rate_clears_the_overtime_rate(app, db):
+    with app.app_context():
+        employee = make_employee(db)
+        employee.basic_rate = "14.50"
+        employee.basic_rate = ""
+        assert employee.basic_rate is None
+        assert employee.overtime_rate is None
+
+
+def test_the_employee_record_has_no_overtime_column(db):
+    """Nothing to keep in step, so there is nothing to store."""
+    from app.models import Employee
+
+    assert not hasattr(Employee, "overtime_rate_enc")

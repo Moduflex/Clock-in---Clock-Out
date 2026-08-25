@@ -40,8 +40,9 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Payroll master sheet (Excel): the four-weekly wage sheet in the office's own
   workbook layout &mdash; same columns, banding and colour coding, so nothing
   downstream changes. See [The payroll master sheet](#the-payroll-master-sheet).
-- Pay rates: an hourly basic and O/T 1.50 rate on each employee's card, held
-  **encrypted** so a database dump does not list what anybody earns.
+- Pay rates: one basic hourly rate per person, held **encrypted** so a database
+  dump does not list what anybody earns. Overtime is time and a half on it,
+  worked out rather than stored, so the two can never disagree.
 - Timesheets: date range (defaults to the last four whole weeks), department and
   per-employee filters, clocked and paid hours per shift, standard and overtime
   hours per person, a week-by-week breakdown, day-by-day drill-down, and three
@@ -355,7 +356,8 @@ The point of it is that almost nothing is retyped. What fills in where:
 | Column | Where it comes from |
 |---|---|
 | Forename, Surname, Department, Payroll Ref | The employee record |
-| Basic (F), O/T 1.50 (H) &mdash; *rates* | The employee's card, if a rate is recorded; blank otherwise |
+| Basic (F) &mdash; *rate* | The employee's card, if a rate is recorded; blank otherwise |
+| O/T 1.50 (H) &mdash; *rate* | `=F*1.5` |
 | Basic (J), O/T 1.50 (K) &mdash; *hours* | The clock, split standard/overtime week by week |
 | Holiday (M), SSP Days (Q) | Typed in |
 | Back Pay (W), Adjustments (X), Deductions (Y) | Typed in |
@@ -378,9 +380,12 @@ Points worth knowing:
 - **A missing rate leaves the cell blank, not zero.** A blank prompts payroll to
   type the rate; a zero would quietly pay nothing. Nothing here ever guesses a
   wage, the same rule the timesheet follows for a missing standard week.
-- **The O/T column is the time-and-a-half rate itself**, as its "O/T 1.50"
-  heading says &mdash; overtime pay is hours &times; that rate, with no extra
-  multiplier hidden in the formula.
+- **Only the basic rate is ever entered.** Column H is `=F*1.5`, not a second
+  figure to keep in step, so a rise typed into F carries through to overtime by
+  itself. That formula is on every row even where no rate is on file yet &mdash;
+  it is the rule rather than a value, so typing a rate into F in Excel fills in
+  the overtime rate without anybody touching column H. Column F is shaded yellow
+  because it is typed in; H is not, because it is worked out.
 - **SSP sits outside TOTAL PAY.** The sheet records the number of days, not a
   rate, so statutory sick pay is settled by the payroll bureau.
 - **Period and dates** fill in automatically. Four-weekly periods are counted
@@ -390,11 +395,13 @@ Points worth knowing:
 
 ### Pay rates are encrypted, not hashed
 
-The hourly rates on the employee card are stored as ciphertext. The key lives in
-`.env` as `PAYROLL_KEY`, never in the database, so a stolen backup or a `.sql`
-dump reveals no wages.
+One rate is stored per person &mdash; the basic hourly one &mdash; as ciphertext. The
+overtime rate is not stored at all: it is basic &times; 1.5, worked out on
+demand, which is one fewer number to keep in step and one fewer to leak. The key
+lives in `.env` as `PAYROLL_KEY`, never in the database, so a stolen backup or a
+`.sql` dump reveals no wages.
 
-They are **encrypted rather than hashed deliberately.** A hash is one way: a
+It is **encrypted rather than hashed deliberately.** A hash is one way: a
 hashed rate could never be shown back on the card or multiplied by anybody's
 hours, which is the entire purpose of storing it. Worse, it would not even be
 secret &mdash; an hourly rate has only a few thousand plausible values, so every
@@ -1035,7 +1042,7 @@ already states intent.
 | `app/services/enrolment.py` | Enrolment with same-person and duplicate checks. |
 | `app/services/timesheet.py` | Pairing events into shifts, paid hours, Monday–Sunday weeks, the standard/overtime split, CSV, timezones. |
 | `app/services/payroll_sheet.py` | The four-weekly master sheet: the payroll workbook's layout, and its live formulas. |
-| `app/services/payrates.py` | Encrypted hourly rates, and the key handling behind them. |
+| `app/services/payrates.py` | The encrypted basic rate, the derived overtime rate, and the key handling behind them. |
 | `scripts/import_staff.py` | Loading the payroll staff list into the employee table. |
 | `scripts/fingerprint_reader.py` | Agent that reads a fingerprint reader and posts matches. |
 | `app/blueprints/` | Kiosk, auth and admin routes. |

@@ -157,12 +157,12 @@ class Employee(db.Model):
     working_week_id: Mapped[int | None] = mapped_column(
         ForeignKey("working_week.id", ondelete="SET NULL")
     )
-    # Hourly pay rates, held as ciphertext rather than as numbers - see
+    # The basic hourly rate, held as ciphertext rather than as a number - see
     # services/payrates.py for the key handling and for why this is encrypted
-    # and not hashed. Read them through the basic_rate / overtime_rate
-    # properties, which never raise on a bad key.
+    # and not hashed. Read it through the basic_rate property, which never
+    # raises on a bad key. There is no overtime column: that rate is derived,
+    # so the two can never disagree.
     basic_rate_enc: Mapped[bytes | None] = mapped_column(LargeBinary(256))
-    overtime_rate_enc: Mapped[bytes | None] = mapped_column(LargeBinary(256))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
     templates: Mapped[list["FaceTemplate"]] = relationship(
@@ -206,16 +206,14 @@ class Employee(db.Model):
 
     @property
     def overtime_rate(self):
-        """Hourly overtime (O/T 1.50) rate as a Decimal, or None."""
-        from .services.payrates import decrypt_rate
+        """Hourly overtime rate: the basic one at time and a half.
 
-        return decrypt_rate(self.overtime_rate_enc)
+        Derived rather than stored, so it cannot drift out of step with the
+        basic rate and a rise only has to be typed once.
+        """
+        from .services.payrates import overtime_from_basic
 
-    @overtime_rate.setter
-    def overtime_rate(self, value) -> None:
-        from .services.payrates import encrypt_rate
-
-        self.overtime_rate_enc = encrypt_rate(value)
+        return overtime_from_basic(self.basic_rate)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<Employee {self.payroll_ref} {self.full_name}>"

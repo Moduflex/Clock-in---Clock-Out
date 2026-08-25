@@ -80,14 +80,23 @@ def upgrade_existing_tables() -> None:
         db.session.commit()
         print("Added employee.working_week_id column.")
 
-    # Encrypted hourly rates. BLOB on MySQL, and SQLite takes it verbatim.
-    for column in ("basic_rate_enc", "overtime_rate_enc"):
-        if column not in columns:
-            db.session.execute(
-                text(f"ALTER TABLE employee ADD COLUMN {column} BLOB")
-            )
-            db.session.commit()
-            print(f"Added employee.{column} column (encrypted pay rate).")
+    # The encrypted basic hourly rate. BLOB on MySQL, and SQLite takes it
+    # verbatim. There is no overtime column: that rate is derived (basic x 1.5).
+    if "basic_rate_enc" not in columns:
+        db.session.execute(text("ALTER TABLE employee ADD COLUMN basic_rate_enc BLOB"))
+        db.session.commit()
+        print("Added employee.basic_rate_enc column (encrypted basic pay rate).")
+
+    if "overtime_rate_enc" in columns:
+        # Left over from the build that stored both rates. Nothing reads it now.
+        # Dropping it is deliberately not automatic: a column is only removed by
+        # somebody who has looked at what is in it first.
+        print(
+            "Note: employee.overtime_rate_enc is no longer used - the overtime "
+            "rate is worked out as basic x 1.5. Drop it when you are ready:
+"
+            "  ALTER TABLE employee DROP COLUMN overtime_rate_enc;"
+        )
 
     shift_columns = {c["name"] for c in inspect(db.engine).get_columns("shift_pattern")}
     if "break_applies_after_minutes" not in shift_columns:
