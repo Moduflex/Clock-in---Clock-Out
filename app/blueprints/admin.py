@@ -37,6 +37,9 @@ from ..models import (
     DIRECTIONS,
     METHOD_MANUAL,
     FINGER_POSITIONS,
+    PAY_BASIS_LABELS,
+    PAY_BASES,
+    PAY_FOUR_WEEKLY,
     AttendanceEvent,
     Employee,
     FingerprintCredential,
@@ -48,6 +51,7 @@ from ..services import attendance
 from ..services.enrolment import enrol_employee, remove_enrolment
 from ..services.payrates import PayRateError, parse_rate, rate_text
 from ..services.payroll_sheet import (
+    excluded_salaried,
     payroll_period,
     sheet_employees,
     to_master_xlsx,
@@ -97,6 +101,12 @@ class EmployeeForm(FlaskForm):
     # behave; parse_rate does the validating and reports one clear message.
     # Only the basic rate is entered - overtime is time and a half on it.
     basic_rate = StringField("Basic rate (£ per hour)", validators=[Optional()])
+    pay_basis = SelectField(
+        "Paid",
+        choices=[(basis, PAY_BASIS_LABELS[basis]) for basis in PAY_BASES],
+        default=PAY_FOUR_WEEKLY,
+        validators=[DataRequired()],
+    )
     is_active = BooleanField("Active", default=True)
 
 
@@ -357,6 +367,7 @@ def employee_new():
             email=(form.email.data or "").strip() or None,
             shift_pattern_id=form.shift_pattern_id.data or None,
             working_week_id=form.working_week_id.data or None,
+            pay_basis=form.pay_basis.data or PAY_FOUR_WEEKLY,
             is_active=bool(form.is_active.data),
         )
         if not _apply_pay_rate(form, employee):
@@ -397,6 +408,7 @@ def employee_edit(employee_id: int):
         employee.email = (form.email.data or "").strip() or None
         employee.shift_pattern_id = form.shift_pattern_id.data or None
         employee.working_week_id = form.working_week_id.data or None
+        employee.pay_basis = form.pay_basis.data or PAY_FOUR_WEEKLY
         employee.is_active = bool(form.is_active.data)
         if not _apply_pay_rate(form, employee):
             db.session.rollback()
@@ -608,6 +620,7 @@ def timesheets():
         "admin/timesheets.html",
         shifts=shifts,
         totals=totals,
+        salaried=excluded_salaried(employee_id=employee_id, department=department),
         weeks=weekly_totals(totals),
         start=start,
         end=end,

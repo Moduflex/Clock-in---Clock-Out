@@ -35,13 +35,24 @@
             standard week decides where overtime starts: hours worked beyond it in a
             Monday&ndash;Sunday week are reported as overtime.</p>
 
-        <h2 style="font-size: 1.1rem;">Pay rate</h2>
+        <h2 style="font-size: 1.1rem;">Pay</h2>
+        <div class="mf-field">
+            {{ form.pay_basis.label }}
+            {{ form.pay_basis() }}
+            {% for error in form.pay_basis.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
+        </div>
+        <p class="mf-note"><strong>Four-weekly</strong> staff are paid from their clocked hours
+            and appear on the payroll master sheet. <strong>Salary</strong> staff are paid a fixed
+            amount whatever they clock, so they are left off that sheet &mdash; they still clock in
+            and out, and still appear on timesheets and the absence board.</p>
+
         <div class="mf-field">
             {{ form.basic_rate.label }}
             {{ form.basic_rate(placeholder="e.g. 14.50", inputmode="decimal", autocomplete="off") }}
             {% for error in form.basic_rate.errors %}<div class="mf-error">{{ error }}</div>{% endfor %}
         </div>
-        <p class="mf-note">The basic hourly rate is the only one to enter. Overtime is worked out
+        <p class="mf-note">The basic hourly rate is only used for four-weekly staff. It is the
+            only rate to enter. Overtime is worked out
             from it at time and a half &mdash; the payroll sheet&rsquo;s &ldquo;O/T 1.50&rdquo;
             column is a formula, so a rise only has to be typed once and the two can never
             disagree. The rate is stored <strong>encrypted</strong>, so a database backup does not

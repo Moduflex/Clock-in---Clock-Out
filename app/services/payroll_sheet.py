@@ -34,6 +34,10 @@ Excel produces the overtime rate without anybody touching column H.
 
 SSP is deliberately outside TOTAL PAY: the sheet records the number of days, not
 a rate, and statutory sick pay is settled by the payroll bureau.
+
+Only four-weekly staff are on the sheet. Salaried staff are paid a fixed amount
+whatever they clock, so hours and rates for them would be a wage this system has
+no business working out - see :func:`sheet_employees`.
 """
 
 from __future__ import annotations
@@ -45,7 +49,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from ..extensions import db
-from ..models import Employee, visible_employee_clause
+from ..models import PAY_FOUR_WEEKLY, PAY_SALARY, Employee, visible_employee_clause
 from .payrates import OVERTIME_MULTIPLIER
 from .timesheet import EmployeeTotal
 
@@ -176,15 +180,50 @@ def sheet_employees(
 ) -> list[Employee]:
     """Everyone who belongs on the sheet, in the order the office keeps them.
 
-    Every *active* employee appears, including anyone who clocked nothing in the
-    period: payroll still has to put their holiday or sick days somewhere, and a
-    name silently missing from a wage sheet is how somebody ends up unpaid.
+    Every active **four-weekly** employee appears, including anyone who clocked
+    nothing in the period: payroll still has to put their holiday or sick days
+    somewhere, and a name silently missing from a wage sheet is how somebody
+    ends up unpaid.
+
+    Salaried staff are the one deliberate exception. They are paid a fixed
+    amount whatever they clock, so a row of hours and rates for them would be a
+    wage this system has no business working out. They are counted by
+    :func:`excluded_salaried` so the exclusion is stated on screen rather than
+    being a silent gap in the list.
 
     Ordered by forename to match the workbook, which is maintained that way.
     """
     stmt = (
         select(Employee)
-        .where(Employee.is_active.is_(True), visible_employee_clause())
+        .where(
+            Employee.is_active.is_(True),
+            Employee.pay_basis == PAY_FOUR_WEEKLY,
+            visible_employee_clause(),
+        )
+        .order_by(Employee.first_name, Employee.last_name)
+    )
+    if employee_id is not None:
+        stmt = stmt.where(Employee.id == employee_id)
+    if department:
+        stmt = stmt.where(Employee.department == department)
+    return list(db.session.scalars(stmt).all())
+
+
+def excluded_salaried(
+    *, employee_id: int | None = None, department: str | None = None
+) -> list[Employee]:
+    """Active salaried staff left off the sheet, for the same filters.
+
+    Exists so the omission can be shown to whoever downloads the sheet. An
+    exclusion nobody is told about is indistinguishable from a bug.
+    """
+    stmt = (
+        select(Employee)
+        .where(
+            Employee.is_active.is_(True),
+            Employee.pay_basis == PAY_SALARY,
+            visible_employee_clause(),
+        )
         .order_by(Employee.first_name, Employee.last_name)
     )
     if employee_id is not None:

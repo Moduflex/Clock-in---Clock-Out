@@ -26,6 +26,7 @@
                 <th>Name</th>
                 <th>Department</th>
                 <th>Standard week</th>
+                <th>Paid</th>
                 <th>Status</th>
                 <th>Face enrolled</th>
                 <th></th>
@@ -40,6 +41,13 @@
                 <td>
                     {% if employee.working_week %}{{ employee.working_week.hours_text }} h
                     {% else %}<span class="mf-note">Default</span>{% endif %}
+                </td>
+                <td>
+                    {% if employee.is_salaried %}
+                    <span class="mf-badge">Salary</span>
+                    {% else %}
+                    <span class="mf-badge mf-badge-out">Four-weekly</span>
+                    {% endif %}
                 </td>
                 <td>
                     {% if employee.is_active %}

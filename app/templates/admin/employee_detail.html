@@ -40,6 +40,18 @@
         <table class="mf-table">
             <tbody>
                 <tr>
+                    <th style="text-align: left;">Paid</th>
+                    <td>
+                        {% if employee.is_salaried %}
+                        <span class="mf-badge">Salary</span>
+                        <span class="mf-note">not on the payroll master sheet</span>
+                        {% else %}
+                        <span class="mf-badge mf-badge-out">Four-weekly</span>
+                        <span class="mf-note">from clocked hours</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
                     <th style="text-align: left;">Shift</th>
                     <td>{{ employee.shift_pattern.label if employee.shift_pattern else 'Default shift' }}</td>
                 </tr>
@@ -48,6 +60,7 @@
                     <td>{% if employee.working_week %}{{ employee.working_week.hours_text }} hours
                         {% else %}Default{% endif %}</td>
                 </tr>
+                {% if not employee.is_salaried %}
                 <tr>
                     <th style="text-align: left;">Basic rate</th>
                     <td>{% if basic_rate %}&pound;{{ basic_rate }} per hour
@@ -59,12 +72,20 @@
                         <span class="mf-note">(basic &times; 1.5)</span>
                         {% else %}<span class="mf-note">Set a basic rate first</span>{% endif %}</td>
                 </tr>
+                {% endif %}
             </tbody>
         </table>
     </div>
-    <p class="mf-note" style="margin-bottom: 0;">The basic rate is held encrypted in the
-        database and feeds the <a href="{{ url_for('admin.timesheets', employee_id=employee.id) }}">payroll
-        master sheet</a>; the overtime rate is worked out from it rather than stored.
+    <p class="mf-note" style="margin-bottom: 0;">
+        {% if employee.is_salaried %}
+        Salaried staff are paid a fixed amount whatever they clock, so they are left off the
+        payroll master sheet and no hourly rate is held for them. Their hours are still on the
+        <a href="{{ url_for('admin.timesheets', employee_id=employee.id) }}">timesheet</a>.
+        {% else %}
+        The basic rate is held encrypted in the database and feeds the
+        <a href="{{ url_for('admin.timesheets', employee_id=employee.id) }}">payroll master
+        sheet</a>; the overtime rate is worked out from it rather than stored.
+        {% endif %}
         <a href="{{ url_for('admin.employee_edit', employee_id=employee.id) }}">Edit details</a>
         to change it.</p>
 </div>

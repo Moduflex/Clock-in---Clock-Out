@@ -87,6 +87,22 @@ def upgrade_existing_tables() -> None:
         db.session.commit()
         print("Added employee.basic_rate_enc column (encrypted basic pay rate).")
 
+    # How somebody is paid. Everyone already on file is four-weekly: that is what
+    # the shop floor is on, and it is the behaviour they had before this column
+    # existed, so the default keeps them exactly where they were.
+    if "pay_basis" not in columns:
+        db.session.execute(
+            text(
+                "ALTER TABLE employee ADD COLUMN pay_basis VARCHAR(16) "
+                "NOT NULL DEFAULT 'four_weekly'"
+            )
+        )
+        db.session.commit()
+        print(
+            "Added employee.pay_basis column; everyone is four-weekly until "
+            "changed on their record."
+        )
+
     if "overtime_rate_enc" in columns:
         # Left over from the build that stored both rates. Nothing reads it now.
         # Dropping it is deliberately not automatic: a column is only removed by

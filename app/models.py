@@ -46,6 +46,20 @@ METHOD_MANUAL = "manual"
 # reports which of its own slots matched; see FingerprintCredential.
 METHOD_FINGER = "finger"
 
+# How somebody is paid. Four-weekly staff are paid from clocked hours and appear
+# on the payroll master sheet; salaried staff are paid a fixed amount regardless
+# of hours, so they are deliberately left off it - their line would be a wage
+# nobody works out from this system. They still clock in and out, and still
+# appear on timesheets and the absence board, because attendance matters for
+# everybody whatever their pay basis.
+PAY_FOUR_WEEKLY = "four_weekly"
+PAY_SALARY = "salary"
+PAY_BASES = (PAY_FOUR_WEEKLY, PAY_SALARY)
+PAY_BASIS_LABELS = {
+    PAY_FOUR_WEEKLY: "Four-weekly",
+    PAY_SALARY: "Salary",
+}
+
 
 def utcnow() -> dt.datetime:
     """Timezone-naive UTC timestamp (MySQL DATETIME stores no offset)."""
@@ -163,6 +177,13 @@ class Employee(db.Model):
     # raises on a bad key. There is no overtime column: that rate is derived,
     # so the two can never disagree.
     basic_rate_enc: Mapped[bytes | None] = mapped_column(LargeBinary(256))
+    # Four-weekly or salary. Stored as a short string rather than a SQL ENUM for
+    # the same reason as the directions: adding a third basis later (monthly,
+    # say) is then a code change and not a schema migration. Four-weekly is the
+    # default because that is what the shop floor is on.
+    pay_basis: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=PAY_FOUR_WEEKLY, server_default=PAY_FOUR_WEEKLY
+    )
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
     templates: Mapped[list["FaceTemplate"]] = relationship(
@@ -187,6 +208,16 @@ class Employee(db.Model):
     @property
     def is_enrolled(self) -> bool:
         return len(self.templates) > 0
+
+    @property
+    def is_salaried(self) -> bool:
+        """True for staff paid a fixed salary rather than from clocked hours."""
+        return self.pay_basis == PAY_SALARY
+
+    @property
+    def pay_basis_label(self) -> str:
+        """"Four-weekly" / "Salary", for a page or a form."""
+        return PAY_BASIS_LABELS.get(self.pay_basis, self.pay_basis)
 
     # --- pay rates ---------------------------------------------------------
     # Imported inside the properties: payrates reaches for the application

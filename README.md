@@ -40,6 +40,11 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Payroll master sheet (Excel): the four-weekly wage sheet in the office's own
   workbook layout &mdash; same columns, banding and colour coding, so nothing
   downstream changes. See [The payroll master sheet](#the-payroll-master-sheet).
+- Pay basis: each person is **four-weekly** or **salary**. Four-weekly staff are
+  paid from clocked hours and appear on the payroll master sheet; salaried staff
+  are paid a fixed amount whatever they clock, so they are left off it &mdash; while
+  still clocking in and out and still appearing on timesheets and the absence
+  board.
 - Pay rates: one basic hourly rate per person, held **encrypted** so a database
   dump does not list what anybody earns. Overtime is time and a half on it,
   worked out rather than stored, so the two can never disagree.
@@ -372,11 +377,17 @@ correcting a rate re-totals the row in front of whoever is checking it.
 
 Points worth knowing:
 
-- **Everybody active gets a row**, including anyone who clocked nothing in the
-  period &mdash; payroll still has to put their holiday or sick days somewhere, and
-  a name silently missing from a wage sheet is how somebody ends up unpaid. To
-  drop somebody from the sheet, untick Active on their record; their history is
-  kept either way.
+- **Every active four-weekly employee gets a row**, including anyone who clocked
+  nothing in the period &mdash; payroll still has to put their holiday or sick days
+  somewhere, and a name silently missing from a wage sheet is how somebody ends
+  up unpaid. To drop somebody from the sheet, untick Active on their record;
+  their history is kept either way.
+- **Salaried staff are the one deliberate exception.** They are paid a fixed
+  amount whatever they clock, so a row of hours and rates for them would be a
+  wage this system has no business working out. The Timesheets page names who
+  has been left off and links to them, because an exclusion nobody is told about
+  is indistinguishable from a bug. Set the basis on the employee's record under
+  **Paid**; everyone is four-weekly unless changed.
 - **A missing rate leaves the cell blank, not zero.** A blank prompts payroll to
   type the rate; a zero would quietly pay nothing. Nothing here ever guesses a
   wage, the same rule the timesheet follows for a missing standard week.

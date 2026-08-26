@@ -54,6 +54,12 @@
             Full detail (CSV)
         </a>
     </form>
+    {% if salaried %}
+    <p class="mf-note">The payroll master sheet covers four-weekly staff only.
+        {{ salaried | length }} salaried employee(s) are not on it:
+        {% for person in salaried %}<a href="{{ url_for('admin.employee_detail', employee_id=person.id) }}">{{ person.full_name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.
+        Their hours are still in the timesheet below.</p>
+    {% endif %}
     <p class="mf-note">
         Whole weeks:
         {% for label, from_date, to_date in shortcuts %}

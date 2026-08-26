@@ -9,11 +9,20 @@ from zoneinfo import ZoneInfo
 import openpyxl
 import pytest
 
-from app.models import DIRECTION_IN, DIRECTION_OUT, AttendanceEvent, ShiftPattern, WorkingWeek
+from app.models import (
+    DIRECTION_IN,
+    DIRECTION_OUT,
+    PAY_FOUR_WEEKLY,
+    PAY_SALARY,
+    AttendanceEvent,
+    ShiftPattern,
+    WorkingWeek,
+)
 from app.services.payroll_sheet import (
     FIRST_DATA_ROW,
     HEADER_LABEL_ROW,
     build_master_workbook,
+    excluded_salaried,
     payroll_period,
     period_label,
     sheet_employees,
@@ -431,3 +440,101 @@ def test_adopt_moves_that_record_onto_its_payroll_reference(payroll_db):
     assert people[0].department == "Factory Admin"
     assert len(people[0].templates) == 1  # the enrolment survived
     assert people[0].events  # and so did the clocking history
+
+
+# --- four-weekly vs salary ----------------------------------------------------
+def test_a_new_employee_is_four_weekly_by_default(payroll_db):
+    """What the shop floor is on, so nobody has to set it for a new starter."""
+    employee = make_employee(payroll_db, ref="519")
+    assert employee.pay_basis == PAY_FOUR_WEEKLY
+    assert not employee.is_salaried
+    assert employee.pay_basis_label == "Four-weekly"
+
+
+def test_salaried_staff_are_left_off_the_master_sheet(payroll_db):
+    """They are paid a fixed amount, so a row of hours and rates is meaningless."""
+    make_employee(payroll_db, ref="519", first="Abu", last="Saab")
+    make_employee(
+        payroll_db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY
+    )
+
+    sheet = _sheet(payroll_db)
+    names = [
+        sheet[f"A{r}"].value for r in range(FIRST_DATA_ROW, FIRST_DATA_ROW + 3)
+    ]
+    assert names == ["Abu", None, None]
+
+
+def test_four_weekly_staff_are_still_on_the_master_sheet(payroll_db):
+    make_employee(
+        payroll_db, ref="519", first="Abu", last="Saab", pay_basis=PAY_FOUR_WEEKLY
+    )
+    assert [e.first_name for e in sheet_employees()] == ["Abu"]
+
+
+def test_a_salaried_employee_still_clocks_and_still_has_a_timesheet(payroll_db):
+    """Attendance matters for everybody, whatever their pay basis."""
+    from app.services.timesheet import build_timesheet, summarise
+
+    sally = make_employee(
+        payroll_db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY
+    )
+    _work(payroll_db, sally, PERIOD_START, 6, 15)
+
+    totals = summarise(build_timesheet(PERIOD_START, PERIOD_END, LONDON))
+    assert [t.employee.first_name for t in totals] == ["Sally"]
+    assert totals[0].paid_hours > 0
+    # ...but she is not on the wage sheet.
+    assert sheet_employees() == []
+
+
+def test_the_excluded_salaried_are_listed_so_the_gap_is_not_silent(payroll_db):
+    """An exclusion nobody is told about is indistinguishable from a bug."""
+    make_employee(payroll_db, ref="519", first="Abu", last="Saab")
+    make_employee(
+        payroll_db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY
+    )
+    make_employee(
+        payroll_db, ref="901", first="Gone", last="Away", pay_basis=PAY_SALARY,
+        is_active=False,
+    )
+
+    excluded = excluded_salaried()
+    # The leaver is not "excluded from the sheet" - she is off it for being inactive.
+    assert [e.first_name for e in excluded] == ["Sally"]
+
+
+def test_the_exclusion_respects_the_department_filter(payroll_db):
+    make_employee(
+        payroll_db, ref="900", first="Sally", last="Reid",
+        department="Office", pay_basis=PAY_SALARY,
+    )
+    make_employee(
+        payroll_db, ref="901", first="Sam", last="Ward",
+        department="Assembly", pay_basis=PAY_SALARY,
+    )
+    assert [e.first_name for e in excluded_salaried(department="Office")] == ["Sally"]
+
+
+def test_switching_somebody_to_salary_takes_them_off_the_sheet(payroll_db):
+    employee = make_employee(payroll_db, ref="519", first="Abu", last="Saab")
+    assert len(sheet_employees()) == 1
+
+    employee.pay_basis = PAY_SALARY
+    payroll_db.session.commit()
+    assert sheet_employees() == []
+    assert [e.first_name for e in excluded_salaried()] == ["Abu"]
+
+
+def test_the_sheet_closes_its_table_under_the_last_four_weekly_row(payroll_db):
+    """The border must follow the rows actually written, not the headcount."""
+    make_employee(payroll_db, ref="519", first="Abu", last="Saab")
+    make_employee(payroll_db, ref="534", first="Archie", last="Callaghan")
+    make_employee(
+        payroll_db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY
+    )
+
+    sheet = _sheet(payroll_db)
+    last = FIRST_DATA_ROW + 1  # two four-weekly people
+    assert sheet[f"A{last}"].value == "Archie"
+    assert sheet[f"A{last}"].border.bottom.style == "medium"

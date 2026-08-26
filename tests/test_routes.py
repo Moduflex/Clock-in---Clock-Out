@@ -648,6 +648,7 @@ def test_pay_rates_save_and_come_back_on_the_edit_form(logged_in, db):
             "shift_pattern_id": "0",
             "working_week_id": "0",
             "basic_rate": "14.50",
+            "pay_basis": "four_weekly",
             "is_active": "y",
         },
         follow_redirects=True,
@@ -680,6 +681,7 @@ def test_a_nonsense_pay_rate_is_refused_without_saving_anything(logged_in, db):
             "shift_pattern_id": "0",
             "working_week_id": "0",
             "basic_rate": "not a number",
+            "pay_basis": "four_weekly",
             "is_active": "y",
         },
     )
@@ -707,6 +709,108 @@ def test_the_employee_card_shows_the_rates(logged_in, db):
     assert response.status_code == 200
     assert b"14.50" in response.data
     assert b"21.75" in response.data  # derived, not entered
+
+
+def test_pay_basis_saves_and_comes_back_on_the_edit_form(logged_in, db):
+    from app.models import PAY_SALARY, Employee
+
+    employee = make_employee(db, ref="E910", first="Sally", last="Reid")
+    response = logged_in.post(
+        f"/admin/employees/{employee.id}/edit",
+        data={
+            "payroll_ref": "E910",
+            "first_name": "Sally",
+            "last_name": "Reid",
+            "department": "Office",
+            "email": "",
+            "shift_pattern_id": "0",
+            "working_week_id": "0",
+            "basic_rate": "",
+            "pay_basis": "salary",
+            "is_active": "y",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    saved = db.session.get(Employee, employee.id)
+    assert saved.pay_basis == PAY_SALARY
+    assert saved.is_salaried
+
+    form = logged_in.get(f"/admin/employees/{employee.id}/edit")
+    assert b'<option selected value="salary">' in form.data or (
+        b'value="salary" selected' in form.data
+    )
+
+
+def test_a_new_employee_defaults_to_four_weekly(logged_in, db):
+    from app.models import PAY_FOUR_WEEKLY, Employee
+    from sqlalchemy import select
+
+    logged_in.post(
+        "/admin/employees/new",
+        data={
+            "payroll_ref": "E911",
+            "first_name": "New",
+            "last_name": "Starter",
+            "department": "Assembly",
+            "email": "",
+            "shift_pattern_id": "0",
+            "working_week_id": "0",
+            "basic_rate": "",
+            "pay_basis": "four_weekly",
+            "is_active": "y",
+        },
+        follow_redirects=True,
+    )
+    saved = db.session.scalars(
+        select(Employee).where(Employee.payroll_ref == "E911")
+    ).one()
+    assert saved.pay_basis == PAY_FOUR_WEEKLY
+
+
+def test_a_salaried_employee_is_not_in_the_downloaded_workbook(logged_in, db):
+    import io
+
+    import openpyxl
+
+    from app.models import PAY_SALARY
+
+    make_employee(db, ref="519", first="Abu", last="Saab")
+    make_employee(db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY)
+
+    response = logged_in.get(
+        "/admin/timesheets/master.xlsx?start=2026-08-17&end=2026-09-13"
+    )
+    assert response.status_code == 200
+    sheet = openpyxl.load_workbook(io.BytesIO(response.data))["Sheet1"]
+    names = [sheet[f"A{r}"].value for r in range(10, 13)]
+    assert names == ["Abu", None, None]
+
+
+def test_the_timesheets_page_names_who_is_left_off_the_wage_sheet(logged_in, db):
+    """The omission has to be stated, not silently applied."""
+    from app.models import PAY_SALARY
+
+    make_employee(db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY)
+    response = logged_in.get("/admin/timesheets")
+    assert response.status_code == 200
+    assert b"salaried employee(s) are not on it" in response.data
+    assert b"Sally Reid" in response.data
+
+
+def test_no_notice_when_everybody_is_four_weekly(logged_in, db):
+    make_employee(db, ref="519", first="Abu", last="Saab")
+    response = logged_in.get("/admin/timesheets")
+    assert b"are not on it" not in response.data
+
+
+def test_the_employee_list_shows_the_pay_basis(logged_in, db):
+    from app.models import PAY_SALARY
+
+    make_employee(db, ref="900", first="Sally", last="Reid", pay_basis=PAY_SALARY)
+    response = logged_in.get("/admin/employees")
+    assert b"Salary" in response.data
 
 
 def test_duplicate_payroll_ref_is_rejected(logged_in, db):
