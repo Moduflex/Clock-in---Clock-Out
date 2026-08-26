@@ -15,7 +15,18 @@ from app.config import BASE_DIR, Config
 
 
 def _config(**overrides) -> Config:
+    """A Config holding *overrides* and nothing else that touches the database.
+
+    Config reads .env when it is imported, so a developer with a real
+    MYSQL_SSL_CA on their machine - which is exactly what a deployment against a
+    managed database needs - would otherwise see these tests fail locally and
+    pass in CI. Every test below states the settings it cares about, so start
+    from the blank defaults rather than from whatever .env happens to hold.
+    """
     config = Config()
+    for key in ("MYSQL_SSL_MODE", "MYSQL_SSL_CA", "MYSQL_SSL_CA_PEM"):
+        setattr(config, key, "")
+    config.MYSQL_HOST = "localhost"
     for key, value in overrides.items():
         setattr(config, key, value)
     return config
