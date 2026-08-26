@@ -24,7 +24,14 @@ def _config(**overrides) -> Config:
     from the blank defaults rather than from whatever .env happens to hold.
     """
     config = Config()
-    for key in ("MYSQL_SSL_MODE", "MYSQL_SSL_CA", "MYSQL_SSL_CA_PEM"):
+    for key in (
+        "MYSQL_SSL_MODE",
+        "MYSQL_SSL_CA",
+        "MYSQL_SSL_CA_PEM",
+        # Cleared too, or every test would pick up the certificate this
+        # repository actually ships and none of them would test what it says.
+        "MYSQL_SSL_CA_BUNDLED",
+    ):
         setattr(config, key, "")
     config.MYSQL_HOST = "localhost"
     for key, value in overrides.items():
@@ -196,6 +203,67 @@ def test_an_unreadable_certificate_is_left_for_the_ssl_module_to_report():
 
     assert written.strip() == "not a certificate at all"
     Config._ca_pem_file = None
+
+
+# --- the certificate committed to the repository ------------------------------
+# The path and the PEM both live in the environment, and on a platform whose
+# environment is edited in a web console rather than in .env that is one more
+# thing to remember and one more place for the two to disagree. A certificate
+# committed at certs/ca-certificate.crt needs neither.
+def test_a_committed_certificate_is_used_when_nothing_else_is_configured(tmp_path):
+    bundled = tmp_path / "ca-certificate.crt"
+    bundled.write_text(PEM, encoding="ascii")
+
+    args = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA_BUNDLED=str(bundled),
+        )
+    ).mysql_connect_args
+
+    assert args["ssl_ca"] == str(bundled)
+
+
+def test_a_missing_committed_certificate_is_not_passed_to_pymysql(tmp_path):
+    """An ssl_ca naming a file that is not there fails before the handshake."""
+    args = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA_BUNDLED=str(tmp_path / "nothing-here.crt"),
+        )
+    ).mysql_connect_args
+
+    assert "ssl_ca" not in args
+
+
+def test_the_environment_wins_over_the_committed_certificate(tmp_path):
+    """So a rotated certificate can be supplied without a deploy."""
+    bundled = tmp_path / "ca-certificate.crt"
+    bundled.write_text(PEM, encoding="ascii")
+
+    args = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA="C:/certs/newer.crt",
+            MYSQL_SSL_CA_BUNDLED=str(bundled),
+        )
+    ).mysql_connect_args
+
+    assert args["ssl_ca"] == "C:/certs/newer.crt"
+
+
+def test_the_repository_ships_a_certificate_the_ssl_module_can_read():
+    """Guards the file itself: a truncated paste fails only at the handshake."""
+    import ssl
+
+    bundled = Path(Config.MYSQL_SSL_CA_BUNDLED)
+    if not bundled.is_file():
+        pytest.skip("no certificate committed at certs/ca-certificate.crt")
+
+    ssl.create_default_context(cafile=str(bundled))
 
 
 def test_a_path_wins_over_pasted_text_when_both_are_set():

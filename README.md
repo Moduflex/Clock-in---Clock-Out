@@ -712,6 +712,7 @@ page; it is a public certificate, not a secret.
 
 | Setting | Use when |
 |---|---|
+| *(nothing set)* | A certificate committed at `certs/ca-certificate.crt` is picked up automatically. **Easiest on a hosting platform** — the certificate travels with the code, so there is no environment variable to set in a web console and nothing to drift out of step with the repository. |
 | `MYSQL_SSL_CA=/path/to/ca-certificate.crt` | The file is on the server. An absolute path is used as given. |
 | `MYSQL_SSL_CA=certs/do-ca.crt` | The certificate is committed to the repository. Relative paths are resolved against the project root, so it works on Windows and on a dyno alike. |
 | `MYSQL_SSL_CA_PEM=-----BEGIN CERTIFICATE-----…` | A platform with config vars and no persistent filesystem (DigitalOcean App Platform, Heroku, Render, Fly). Paste the certificate text; it is written to a temporary file at start-up. |
@@ -724,7 +725,11 @@ says nothing about the certificate.
 
 **On DigitalOcean App Platform** the environment is set in the app spec, not in
 `.env` — `.env` is deliberately git-ignored and never leaves your machine, so a
-setting added there works locally and does nothing once deployed. If the managed
+setting added there works locally and does nothing once deployed. That is the
+usual reason a deployment still fails after the certificate has been committed:
+the file is there, but nothing told the app to use it. Committing it as
+`certs/ca-certificate.crt` avoids the problem entirely, because that path is
+found without any environment variable at all. If the managed
 database is attached to the app as a component, App Platform can supply the
 certificate itself: set `MYSQL_SSL_CA_PEM` to the bindable value `${db.CA_CERT}`
 (replacing `db` with the component name) rather than pasting a copy that will go

@@ -94,6 +94,12 @@ class Config:
     # nowhere to put a file - so this pastes straight into a config var. It is
     # a public certificate, not a secret.
     MYSQL_SSL_CA_PEM = (os.getenv("MYSQL_SSL_CA_PEM") or "").strip()
+    # Last resort: a certificate committed to the repository at this path is
+    # used when neither of the above is set. Every managed provider hands you
+    # one file, so dropping it here makes the deployment work from the code
+    # alone - no environment variable to remember on a platform whose console
+    # is a different place from .env, and no way for the two to drift apart.
+    MYSQL_SSL_CA_BUNDLED = str(BASE_DIR / "certs" / "ca-certificate.crt")
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
@@ -320,7 +326,9 @@ class Config:
 
         Accepts either a path (``MYSQL_SSL_CA``) or the certificate text
         (``MYSQL_SSL_CA_PEM``); the text is written to a temporary file once per
-        process, because PyMySQL and the ssl module both want a filename.
+        process, because PyMySQL and the ssl module both want a filename. If
+        neither is set, a certificate committed at ``MYSQL_SSL_CA_BUNDLED`` is
+        used - see that attribute for why.
         """
         if self.MYSQL_SSL_CA:
             # An absolute path is passed through exactly as given; only a
@@ -330,6 +338,9 @@ class Config:
             return str(BASE_DIR / self.MYSQL_SSL_CA)
 
         if not self.MYSQL_SSL_CA_PEM:
+            bundled = self.MYSQL_SSL_CA_BUNDLED
+            if bundled and Path(bundled).is_file():
+                return bundled
             return ""
 
         cached = Config._ca_pem_file
