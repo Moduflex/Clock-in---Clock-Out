@@ -48,7 +48,9 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Pay rates: one basic hourly rate per person, held **encrypted** so a database
   dump does not list what anybody earns. Overtime is time and a half on it,
   worked out rather than stored, so the two can never disagree.
-- Timesheets: date range (defaults to the last four whole weeks), department and
+- Timesheets: date range (defaults to the last four whole weeks), a **4 weeks
+  pay** button for the wage period itself &mdash; the four whole weeks up to last
+  Sunday, with the week in progress left out &mdash; department and
   per-employee filters, clocked and paid hours per shift, standard and overtime
   hours per person, a week-by-week breakdown, day-by-day drill-down, and three
   CSV exports — a one-line-per-person master sheet for payroll, the same split
@@ -350,6 +352,11 @@ limit nor the shared-login problem, and needs no elevation.
 ---
 
 ## The payroll master sheet
+
+Press **4 weeks pay** first: it sets the range to the four whole Monday&ndash;Sunday
+weeks ending last Sunday. The week in progress is never paid until it has
+finished, so counting back from today the period spans five calendar weeks and
+the current one is not in it.
 
 **Timesheets &rarr; Payroll master sheet (Excel)** produces the four-weekly wage
 sheet in the layout the office already sends to payroll &mdash; the same columns,

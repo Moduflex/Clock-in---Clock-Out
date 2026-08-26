@@ -554,6 +554,19 @@ def test_timesheets_default_to_whole_monday_to_sunday_weeks(logged_in, db):
     assert dt.date.fromisoformat(found["end"]).weekday() == 6  # Sunday
 
 
+def test_timesheets_offer_a_four_week_pay_button(logged_in, db):
+    """The button links to the four whole weeks up to last Sunday."""
+    from app.services.timesheet import pay_range, week_start
+
+    make_employee(db)
+    response = logged_in.get("/admin/timesheets")
+    body = response.data.decode("utf-8")
+    start, end = pay_range(dt.date.today())
+    assert "4 weeks pay" in body
+    assert f"start={start.isoformat()}&amp;end={end.isoformat()}" in body
+    assert end == week_start(dt.date.today()) - dt.timedelta(days=1)  # last Sunday
+
+
 def test_part_week_range_warns_about_the_overtime_figure(logged_in, db):
     make_employee(db)
     response = logged_in.get("/admin/timesheets?start=2026-01-06&end=2026-01-20")

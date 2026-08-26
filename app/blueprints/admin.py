@@ -63,6 +63,7 @@ from ..services.timesheet import (
     get_timezone,
     is_whole_weeks,
     list_departments,
+    pay_range,
     summarise,
     to_csv,
     to_local,
@@ -616,6 +617,8 @@ def timesheets():
     )
     totals = summarise(shifts)
     snapped_start, snapped_end = whole_weeks(start, end)
+    today = dt.datetime.now(tz).date()
+    pay_start, pay_end = pay_range(today)
     return render_template(
         "admin/timesheets.html",
         shifts=shifts,
@@ -627,7 +630,9 @@ def timesheets():
         whole_weeks=is_whole_weeks(start, end),
         snapped_start=snapped_start,
         snapped_end=snapped_end,
-        shortcuts=_week_shortcuts(dt.datetime.now(tz).date()),
+        shortcuts=_week_shortcuts(today),
+        pay_start=pay_start,
+        pay_end=pay_end,
         employee_id=employee_id,
         department=department,
         departments=list_departments(),

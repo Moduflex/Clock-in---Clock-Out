@@ -17,6 +17,7 @@ from app.services.timesheet import (
     build_timesheet,
     default_range,
     is_whole_weeks,
+    pay_range,
     split_overtime,
     summarise,
     to_master_csv,
@@ -129,6 +130,38 @@ def test_default_range_is_four_whole_weeks_ending_this_week():
 def test_default_range_takes_a_week_count():
     start, end = default_range(dt.date(2026, 1, 21), weeks=13)
     assert (end - start).days + 1 == 13 * 7
+    assert is_whole_weeks(start, end)
+
+
+def test_pay_range_is_four_whole_weeks_ending_last_sunday():
+    start, end = pay_range(dt.date(2026, 1, 21))  # a Wednesday
+    assert end == dt.date(2026, 1, 18)  # last Sunday, not this week's
+    assert start == dt.date(2025, 12, 22)  # Monday four weeks earlier
+    assert (end - start).days + 1 == 28
+    assert is_whole_weeks(start, end)
+
+
+def test_pay_range_excludes_the_week_in_progress():
+    """Run on a Monday, the current week is still left out entirely."""
+    monday = dt.date(2026, 1, 19)
+    start, end = pay_range(monday)
+    assert end == monday - dt.timedelta(days=1)
+    assert end < week_start(monday)
+    assert start == week_start(monday) - dt.timedelta(days=28)
+
+
+def test_pay_range_is_default_range_shifted_back_one_week():
+    for day in (dt.date(2026, 1, 19), dt.date(2026, 1, 21), dt.date(2026, 1, 25)):
+        pay_start, pay_end = pay_range(day)
+        default_start, default_end = default_range(day)
+        assert pay_start == default_start - dt.timedelta(days=7)
+        assert pay_end == default_end - dt.timedelta(days=7)
+
+
+def test_pay_range_takes_a_week_count():
+    start, end = pay_range(dt.date(2026, 1, 21), weeks=13)
+    assert (end - start).days + 1 == 13 * 7
+    assert end == dt.date(2026, 1, 18)
     assert is_whole_weeks(start, end)
 
 

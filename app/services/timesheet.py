@@ -120,6 +120,17 @@ def default_range(today: dt.date, weeks: int = 4) -> tuple[dt.date, dt.date]:
     return end - dt.timedelta(days=weeks * WEEK_LENGTH - 1), end
 
 
+def pay_range(today: dt.date, weeks: int = 4) -> tuple[dt.date, dt.date]:
+    """The *weeks* whole weeks up to last Sunday, leaving the current week out.
+
+    This is the four-weekly wage period: the week in progress is not paid until
+    it has finished, so a run made today covers the four completed weeks behind
+    it. Counting back from today that spans five calendar weeks.
+    """
+    end = week_start(today) - dt.timedelta(days=1)  # last Sunday
+    return end - dt.timedelta(days=weeks * WEEK_LENGTH - 1), end
+
+
 def round_forward(moment: dt.datetime) -> dt.datetime:
     """Snap forward to the next pay-grid boundary (07:34 -> 07:45)."""
     anchor = moment.replace(minute=0, second=0, microsecond=0)

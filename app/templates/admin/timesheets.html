@@ -38,6 +38,11 @@
         </div>
         <button class="mf-btn" type="submit">Show</button>
         <a class="mf-btn"
+           title="The four completed weeks up to {{ pay_end.strftime('%d/%m/%Y') }} — the week in progress is not paid yet"
+           href="{{ url_for('admin.timesheets', start=pay_start.isoformat(), end=pay_end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
+            4 weeks pay
+        </a>
+        <a class="mf-btn"
            href="{{ url_for('admin.timesheets_master_xlsx', start=start.isoformat(), end=end.isoformat(), employee_id=employee_id or '', department=department or '') }}">
             Payroll master sheet (Excel)
         </a>
@@ -60,6 +65,9 @@
         {% for person in salaried %}<a href="{{ url_for('admin.employee_detail', employee_id=person.id) }}">{{ person.full_name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.
         Their hours are still in the timesheet below.</p>
     {% endif %}
+    <p class="mf-note"><strong>4 weeks pay</strong> is the wage period:
+        {{ pay_start.strftime('%a %d/%m/%Y') }} to {{ pay_end.strftime('%a %d/%m/%Y') }}
+        &mdash; the four whole weeks up to last Sunday, with the week in progress left out.</p>
     <p class="mf-note">
         Whole weeks:
         {% for label, from_date, to_date in shortcuts %}
