@@ -99,7 +99,7 @@ three ways, all landing in the same place:
 
 | Input | How |
 |---|---|
-| Touch, mouse | The on-screen keys, which unfold as soon as the box is used. |
+| Touch, mouse | The on-screen keys, which are always on show — a camera that has just failed is exactly when somebody needs to spot the way round it. |
 | Keyboard | Type straight into the box; **Enter** clocks, **Escape** clears. |
 | USB number pad | A digit pressed with nothing else focused adopts the box, so a wedge clocks somebody without a finger going near the screen. |
 

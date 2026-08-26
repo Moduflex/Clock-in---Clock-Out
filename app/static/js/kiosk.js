@@ -675,8 +675,9 @@
      *                   a USB wedge clocks somebody without a finger going near
      *                   the screen
      *
-     * The keys stay folded away until somebody starts, because a permanent 4x3
-     * grid does not fit above the fold on a 720p kiosk screen.
+     * The keys are always on show. Somebody standing at a kiosk whose camera has
+     * just failed needs to see the way round it without first having to work out
+     * that tapping the box reveals one.
      */
     var keypadBusy = false;
 
@@ -692,17 +693,8 @@
         keypadGo.disabled = !keypadValue() || keypadBusy;
     }
 
-    /* Unfold the keys and keep them out until the entry is finished with. They
-     * deliberately do NOT fold away on blur: tapping a key blurs the box for an
-     * instant, and a grid that flickered out from under a thumb would be worse
-     * than one that stays put. */
-    function openKeypad() {
-        keypadKeys.hidden = false;
-    }
-
     function resetKeypad() {
         keypadInput.value = "";
-        keypadKeys.hidden = true;
         keypadInput.blur();
         paintKeypad();
     }
@@ -712,7 +704,6 @@
             return;
         }
         keypadInput.value += digit;
-        openKeypad();
         paintKeypad();
     }
 
@@ -772,7 +763,6 @@
 
     function startKeypad() {
         keypadInput.addEventListener("input", paintKeypad);
-        keypadInput.addEventListener("focus", openKeypad);
 
         keypadInput.addEventListener("keydown", function (event) {
             if (event.key === " ") {

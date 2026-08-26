@@ -683,10 +683,12 @@ body.mf-kiosk {
 }
 
 /* --- Clocking by payroll number ----------------------------------------- */
-/* The fallback for when the camera cannot see somebody. The box itself is
-   always on screen so a keyboard or a USB number pad works without touching
-   anything; the on-screen keys unfold only once somebody starts, because a
-   permanent 4x3 grid does not fit above the fold on a 720p kiosk screen. */
+/* The fallback for when the camera cannot see somebody. The box takes a
+   keyboard or a USB number pad without anything being touched; the keys beneath
+   it are for a finger or a mouse. Both stay on screen at all times - somebody
+   at a kiosk whose camera has just died needs to see the way round it, not
+   discover it. Everything above them gives up height on a short screen rather
+   than the bottom row going off the glass; see the media query below. */
 .mf-keypad {
     border-top: 1px solid rgba(255, 255, 255, 0.18);
     padding-top: 0.9rem;
@@ -767,10 +769,6 @@ input.mf-keypad-input:focus {
     margin-top: 0.6rem;
 }
 
-.mf-keypad-keys[hidden] {
-    display: none;
-}
-
 /* Sized for a gloved thumb: 3.2rem clears the 44px minimum touch target with
    room to spare, which matters more here than saving a centimetre. */
 .mf-keypad-keys button {
@@ -802,9 +800,43 @@ input.mf-keypad-input:focus {
     color: var(--mf-blue-100);
 }
 
-/* Short screens - a 1024x600 panel is a common kiosk. Everything above the keys
-   gives up a little height so the bottom row stays on the glass: a Clear key
-   somebody cannot reach is worse than a slightly smaller name. */
+/* Two tiers of tightening, because the whole panel has to fit without scrolling
+   on the screens these actually run on: a 1366x768 or 1280x720 all-in-one, and
+   the 1024x600 industrial panels. Everything above the keys gives up height
+   before the keys do - a Clear key somebody cannot reach is worse than a
+   slightly smaller name - and the bottom row has to stay on the glass. */
+@media (max-height: 820px) {
+    .mf-kiosk-panel {
+        gap: 0.85rem;
+    }
+
+    .mf-kiosk-result {
+        min-height: 6rem;
+    }
+
+    .mf-scan-btn {
+        font-size: 1.35rem;
+        padding: 0.85rem 1rem;
+    }
+
+    .mf-keypad {
+        padding-top: 0.75rem;
+    }
+
+    .mf-keypad-title {
+        margin-bottom: 0.45rem;
+    }
+
+    .mf-keypad-keys {
+        gap: 0.45rem;
+        margin-top: 0.5rem;
+    }
+
+    .mf-keypad-keys button {
+        min-height: 2.6rem;
+    }
+}
+
 @media (max-height: 700px) {
     .mf-kiosk-panel {
         gap: 0.7rem;

@@ -73,10 +73,6 @@ function mkEl(id) {
   "keypad", "keypad-input", "keypad-keys", "keypad-go",
 ].forEach((id) => (els[id] = mkEl(id)));
 
-/* The template ships this element with the `hidden` attribute set, so the stub
- * has to start the same way - otherwise the first check tests the stub. */
-els["keypad-keys"].hidden = true;
-
 const documentHandlers = {};
 global.document = {
   activeElement: null,
@@ -268,9 +264,11 @@ const UNKNOWN = {
    * would otherwise wipe a result out from under the checks below. */
   await advance(200);
 
-  // 1. Nothing typed: the Clock button is not offerable.
+  // 1. Nothing typed: the Clock button is not offerable, but the keys are
+  //    there to be seen. A camera that has just failed is exactly when somebody
+  //    needs to spot the way round it.
   check("empty box leaves Clock disabled", go.disabled === true);
-  check("keys start folded away", grid.hidden === true);
+  check("keys are on show before anybody touches anything", grid.hidden === false);
 
   // 2. Touch / mouse: the on-screen keys build the number.
   input.focus();
@@ -278,7 +276,6 @@ const UNKNOWN = {
   tap(grid, keyEl("4"));
   tap(grid, keyEl("2"));
   check("tapping keys builds the number", input.value === "042", `value="${input.value}"`);
-  check("keys unfold once in use", grid.hidden === false);
   check("Clock becomes available", go.disabled === false);
 
   // 3. Correcting a mistake.
@@ -293,7 +290,7 @@ const UNKNOWN = {
         JSON.stringify(lastPayroll()));
   check("a recognised number shows the name", nameEl() === "Sam Fletcher", `name="${nameEl()}"`);
   check("a recognised number clears the box for the next person", input.value === "");
-  check("keys fold away again after a clock", grid.hidden === true);
+  check("keys stay on show after a clock", grid.hidden === false);
 
   // 5. Keyboard: type into the box and press Enter.
   const before = posts("payroll").length;
