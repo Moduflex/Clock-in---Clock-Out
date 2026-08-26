@@ -644,7 +644,19 @@ never drops anything, so it is safe to re-run.
 
 **Upgrading an existing installation** is the same command: re-running
 `scripts/init_db.py` adds any missing tables and columns and seeds the 40-hour
-and 32-hour standard weeks. Adding overtime brings in a `working_week` table,
+and 32-hour standard weeks. **Run it every time you deploy new code.** It is not
+optional: `create_all()` adds missing *tables* but never missing *columns*, so a
+database that predates a column keeps working until something selects it, and
+then every page using it returns a bare 500 with nothing on screen to say why.
+To check before or after, without changing anything:
+
+```bash
+python -m flask --app wsgi check-schema
+```
+
+It names any table or column the code expects but the database lacks, prints the
+`ALTER TABLE` that closes the gap, and exits non-zero so a deployment script can
+stop on it. Adding overtime brings in a `working_week` table,
 `employee.working_week_id` and `shift_pattern.pay_beyond_end`, the last of which
 is switched **on** for every existing shift — so time worked after the shift end
 starts being paid as overtime. If a shift should not work that way, untick

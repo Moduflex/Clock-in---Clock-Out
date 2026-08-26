@@ -219,6 +219,72 @@ def _register_cli(app: Flask) -> None:
         db.session.commit()
         click.echo(f"Created administrator {username!r}.")
 
+    @app.cli.command("check-schema")
+    def check_schema_command() -> None:
+        """Report any table or column the code expects but the database lacks.
+
+        ``init-db`` runs ``create_all()``, which adds missing *tables* but never
+        missing *columns*. So a database that predates a new column keeps
+        working until something selects that column, and then every page using
+        it returns 500 with nothing on screen to say why. This names the gap and
+        prints the ALTER TABLE that closes it.
+        """
+        from sqlalchemy import inspect
+        from sqlalchemy.exc import SQLAlchemyError
+
+        try:
+            inspector = inspect(db.engine)
+            tables = set(inspector.get_table_names())
+        except SQLAlchemyError as exc:
+            raise click.ClickException(f"Cannot read the database: {exc}") from exc
+
+        dialect = db.engine.dialect
+        missing_tables = []
+        missing_columns = []
+
+        for table in db.metadata.sorted_tables:
+            if table.name not in tables:
+                missing_tables.append(table.name)
+                continue
+            present = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in present:
+                    missing_columns.append((table, column))
+
+        if not missing_tables and not missing_columns:
+            click.echo(f"Schema is up to date ({len(db.metadata.sorted_tables)} tables checked).")
+            return
+
+        for name in missing_tables:
+            click.echo(f"MISSING TABLE   {name}")
+        for table, column in missing_columns:
+            click.echo(f"MISSING COLUMN  {table.name}.{column.name}")
+
+        click.echo("")
+        if missing_tables:
+            click.echo("Run 'flask --app wsgi init-db' to create the missing tables.")
+        if missing_columns:
+            click.echo("Columns are never added automatically. Run these, then restart:")
+            click.echo("")
+            for table, column in missing_columns:
+                try:
+                    sql_type = column.type.compile(dialect)
+                except Exception:  # pragma: no cover - exotic type, name it anyway
+                    sql_type = str(column.type)
+                clause = f"ALTER TABLE {table.name} ADD COLUMN {column.name} {sql_type}"
+                if not column.nullable:
+                    default = column.server_default
+                    if default is not None and hasattr(default, "arg"):
+                        clause += f" NOT NULL DEFAULT {default.arg!r}"
+                    else:
+                        # No server default to fall back on: adding it NOT NULL
+                        # would fail on a table that already has rows.
+                        clause += "  -- NULL for existing rows; set them, then add NOT NULL"
+                click.echo(f"  {clause};")
+            click.echo("")
+            click.echo("Back the database up first.")
+        raise SystemExit(1)
+
     @app.cli.command("payroll-key")
     def payroll_key_command() -> None:
         """Generate a key for the encrypted pay-rate columns."""

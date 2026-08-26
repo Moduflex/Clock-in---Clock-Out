@@ -109,8 +109,7 @@ def upgrade_existing_tables() -> None:
         # somebody who has looked at what is in it first.
         print(
             "Note: employee.overtime_rate_enc is no longer used - the overtime "
-            "rate is worked out as basic x 1.5. Drop it when you are ready:
-"
+            "rate is worked out as basic x 1.5. Drop it when you are ready:\n"
             "  ALTER TABLE employee DROP COLUMN overtime_rate_enc;"
         )
 
