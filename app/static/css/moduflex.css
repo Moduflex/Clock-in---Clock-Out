@@ -77,32 +77,42 @@ a {
 }
 
 /* --- Layout ------------------------------------------------------------- */
+/* The bar is white with the logo on it rather than a blue band: the logo is
+   the brand mark, and repeating the company name beside it in type only
+   competes with it. The blue is kept as the rule underneath. */
 .mf-header {
-    background: var(--mf-blue-900);
-    color: var(--mf-white);
-    padding: 0.6rem 1.25rem;
+    background: var(--mf-white);
+    border-bottom: 3px solid var(--mf-blue-500);
+    padding: 0.9rem 1.75rem;
     display: flex;
     align-items: center;
-    gap: 1.5rem;
+    gap: 2.25rem;
     flex-wrap: wrap;
+}
+
+.mf-logo {
+    height: 40px;
+    width: auto;
+    display: block;
 }
 
 .mf-brand {
     font-size: 1.15rem;
-    color: var(--mf-white);
+    color: var(--mf-blue-900);
     text-decoration: none;
     white-space: nowrap;
 }
 
 .mf-nav {
     display: flex;
-    gap: 1rem;
+    gap: 1.5rem;
     flex-wrap: wrap;
     flex: 1;
+    font-size: 0.97rem;
 }
 
 .mf-nav a {
-    color: var(--mf-blue-100);
+    color: var(--mf-grey-600);
     text-decoration: none;
     padding: 0.2rem 0;
     border-bottom: 2px solid transparent;
@@ -110,8 +120,26 @@ a {
 
 .mf-nav a:hover,
 .mf-nav a.is-active {
-    color: var(--mf-white);
+    color: var(--mf-blue-900);
     border-bottom-color: var(--mf-blue-500);
+}
+
+.mf-nav a.is-active {
+    font-family: var(--mf-font-head);
+}
+
+/* Who is signed in, so a shared office machine says whose name is against any
+   manual entry made from it. */
+.mf-header-user {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.mf-header-user strong {
+    font-family: var(--mf-font-head);
+    font-weight: 600;
+    color: var(--mf-grey-900);
 }
 
 .mf-header form {
@@ -122,6 +150,13 @@ main {
     max-width: 1100px;
     margin: 1.5rem auto;
     padding: 0 1.25rem 3rem;
+}
+
+/* The dashboard carries a sidebar, so it gets a wider measure than the
+   single-column pages. */
+body.mf-dash main {
+    max-width: 1200px;
+    margin: 2rem auto;
 }
 
 .mf-subtitle {
@@ -439,6 +474,7 @@ body.mf-kiosk {
 
 .mf-kiosk-top .mf-brand {
     font-size: 1.4rem;
+    color: var(--mf-white);
 }
 
 .mf-kiosk-clock {
@@ -792,16 +828,482 @@ dialog.mf-dialog::backdrop {
     white-space: nowrap;
 }
 
+/* ==========================================================================
+   Dashboard: the "is anything wrong?" page
+   --------------------------------------------------------------------------
+   A wide column of exceptions with a narrow payroll and kiosk rail beside it.
+   Every figure on it links to the page that can fix the thing it counts,
+   because a number nobody can act on is only decoration.
+   ========================================================================== */
+.mf-page-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.75rem;
+}
+
+.mf-page-head h1 {
+    font-size: 1.9rem;
+}
+
+.mf-page-head .mf-subtitle {
+    margin: 0;
+}
+
+.mf-page-aside {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.mf-live-clock {
+    font-family: var(--mf-font-head);
+    font-size: 2rem;
+    line-height: 1;
+    color: var(--mf-blue-900);
+    text-align: right;
+}
+
+.mf-live-clock + .mf-note {
+    text-align: right;
+}
+
+.mf-kiosk-state {
+    padding-left: 1.5rem;
+    border-left: 1px solid var(--mf-grey-300);
+}
+
+.mf-kiosk-state-line {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.94rem;
+}
+
+.mf-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+    background: var(--mf-grey-300);
+}
+
+.mf-dot-live {
+    background: var(--mf-green);
+}
+
+.mf-dash-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 1.75rem;
+    align-items: start;
+}
+
+/* --- The presence hero -------------------------------------------------- */
+.mf-presence {
+    background: var(--mf-white);
+    border: 1px solid var(--mf-grey-300);
+    border-radius: var(--mf-radius);
+    box-shadow: var(--mf-shadow);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.75rem;
+    display: flex;
+    gap: 2.5rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.mf-presence-figure {
+    min-width: 200px;
+}
+
+.mf-presence-count {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.mf-presence-count b {
+    font-family: var(--mf-font-head);
+    font-weight: 600;
+    font-size: 5rem;
+    line-height: 0.88;
+    color: var(--mf-blue-900);
+}
+
+.mf-presence-count span {
+    font-family: var(--mf-font-head);
+    font-size: 1.5rem;
+    color: var(--mf-grey-600);
+}
+
+.mf-presence-figure .mf-btn {
+    margin-top: 1.1rem;
+}
+
+.mf-presence-split {
+    flex: 1;
+    min-width: 300px;
+}
+
+/* One bar, four states, in the same order and the same colours as the key
+   below it, so the eye can move between them without translating. */
+.mf-presence-bar {
+    display: flex;
+    height: 12px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--mf-grey-300);
+}
+
+.mf-presence-bar span {
+    display: block;
+}
+
+.mf-presence-key {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 1.5rem;
+    margin-top: 0.9rem;
+    font-size: 0.92rem;
+}
+
+.mf-presence-key a {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    color: inherit;
+    text-decoration: none;
+}
+
+.mf-presence-key a:hover > span:first-child {
+    text-decoration: underline;
+}
+
+.mf-presence-key a:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--mf-grey-100);
+    padding-bottom: 0.3rem;
+}
+
+.mf-presence-key b {
+    font-family: var(--mf-font-head);
+    font-weight: 600;
+}
+
+.mf-swatch {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    margin-right: 0.45rem;
+}
+
+.mf-swatch-on-site {
+    background: var(--mf-green);
+}
+
+.mf-swatch-left {
+    background: var(--mf-blue-500);
+}
+
+.mf-swatch-not-due {
+    background: var(--mf-grey-600);
+}
+
+.mf-swatch-overdue {
+    background: var(--mf-red);
+}
+
+/* A count that is a problem, without shrinking it the way .mf-error would. */
+.mf-count-alert {
+    color: var(--mf-red);
+}
+
+/* --- Exception tiles ---------------------------------------------------- */
+.mf-exceptions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 1.75rem;
+}
+
+.mf-exception {
+    text-decoration: none;
+    color: inherit;
+    background: var(--mf-white);
+    border: 1px solid var(--mf-grey-300);
+    border-left: 4px solid var(--mf-blue-500);
+    border-radius: var(--mf-radius);
+    box-shadow: var(--mf-shadow);
+    padding: 1rem 1.15rem;
+    display: block;
+}
+
+.mf-exception:hover {
+    background: var(--mf-blue-100);
+}
+
+.mf-exception-value {
+    font-family: var(--mf-font-head);
+    font-size: 2.1rem;
+    line-height: 1;
+    color: var(--mf-blue-900);
+}
+
+.mf-exception .mf-note {
+    margin: 0.4rem 0 0;
+}
+
+.mf-exception-danger {
+    border-left-color: var(--mf-red);
+}
+
+.mf-exception-danger .mf-exception-value {
+    color: var(--mf-red);
+}
+
+.mf-exception-warn {
+    border-left-color: var(--mf-amber);
+}
+
+.mf-exception-warn .mf-exception-value {
+    color: var(--mf-amber);
+}
+
+/* Nothing wrong deserves saying as plainly as something wrong. */
+.mf-exception-clear {
+    border-left-color: var(--mf-green);
+}
+
+.mf-exception-clear .mf-exception-value {
+    color: var(--mf-green);
+}
+
+/* --- Tables that sit on the page rather than inside a card -------------- */
+.mf-table-card {
+    background: var(--mf-white);
+    border: 1px solid var(--mf-grey-300);
+    border-radius: var(--mf-radius);
+    box-shadow: var(--mf-shadow);
+    overflow-x: auto;
+}
+
+/* --- On site by department --------------------------------------------- */
+.mf-dept-card {
+    background: var(--mf-white);
+    border: 1px solid var(--mf-grey-300);
+    border-radius: var(--mf-radius);
+    box-shadow: var(--mf-shadow);
+    padding: 1.4rem 1.6rem;
+}
+
+.mf-dept-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem 2.75rem;
+}
+
+.mf-dept-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--mf-grey-300);
+    padding-bottom: 0.3rem;
+    margin-bottom: 0.6rem;
+    font-family: var(--mf-font-head);
+    color: var(--mf-blue-900);
+}
+
+.mf-dept-head .mf-note {
+    font-family: var(--mf-font-body);
+}
+
+.mf-dept-names {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+/* --- The rail ----------------------------------------------------------- */
+.mf-panel {
+    background: var(--mf-white);
+    border: 1px solid var(--mf-grey-300);
+    border-radius: var(--mf-radius);
+    box-shadow: var(--mf-shadow);
+    padding: 1.15rem 1.35rem;
+    margin-bottom: 1.5rem;
+}
+
+.mf-panel h2 {
+    margin: 0 0 0.7rem;
+    font-size: 1rem;
+    color: var(--mf-blue-900);
+}
+
+.mf-jump {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    font-size: 0.94rem;
+}
+
+.mf-kv {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.92rem;
+}
+
+.mf-kv > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--mf-grey-300);
+}
+
+.mf-kv > div:last-child {
+    border-bottom: 0;
+}
+
+.mf-kv b {
+    font-family: var(--mf-font-head);
+    font-weight: 600;
+}
+
+/* --- Payroll period card ------------------------------------------------ */
+.mf-payroll {
+    background: var(--mf-blue-900);
+    color: var(--mf-white);
+    border-radius: var(--mf-radius);
+    box-shadow: var(--mf-shadow);
+    padding: 1.4rem 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.mf-payroll-kicker {
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mf-blue-100);
+}
+
+.mf-payroll-dates {
+    font-family: var(--mf-font-head);
+    font-size: 1.5rem;
+    line-height: 1.2;
+    margin: 0.3rem 0 0.1rem;
+}
+
+.mf-payroll-week {
+    font-size: 0.9rem;
+    color: var(--mf-blue-100);
+}
+
+.mf-payroll-weeks {
+    display: flex;
+    gap: 5px;
+    margin: 1.1rem 0;
+}
+
+.mf-payroll-weeks span {
+    flex: 1;
+    height: 7px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.mf-payroll-weeks span.is-done {
+    background: var(--mf-green);
+}
+
+.mf-payroll-weeks span.is-current {
+    background: var(--mf-blue-500);
+}
+
+.mf-payroll .mf-kv {
+    font-size: 0.94rem;
+}
+
+.mf-payroll .mf-kv > div {
+    border-bottom-color: rgba(255, 255, 255, 0.16);
+    padding-bottom: 0.5rem;
+}
+
+.mf-payroll .mf-kv > div > span {
+    color: var(--mf-blue-100);
+}
+
+.mf-payroll .mf-btn {
+    margin-top: 1.25rem;
+    width: 100%;
+    text-align: center;
+    background: var(--mf-blue-500);
+    border-color: var(--mf-blue-500);
+    color: var(--mf-white);
+}
+
+.mf-payroll .mf-btn:hover {
+    background: var(--mf-blue-700);
+    border-color: var(--mf-blue-700);
+}
+
+.mf-payroll-foot {
+    margin: 0.7rem 0 0;
+    font-size: 0.85rem;
+    color: var(--mf-blue-100);
+    text-align: center;
+}
+
+.mf-figure-warn {
+    color: var(--mf-amber-100);
+}
+
+.mf-figure-danger {
+    color: var(--mf-red-100);
+}
+
+/* --- Narrow screens ----------------------------------------------------- */
+@media (max-width: 1000px) {
+    .mf-dash-grid,
+    .mf-dept-grid,
+    .mf-presence-key,
+    .mf-exceptions {
+        grid-template-columns: 1fr;
+    }
+
+    .mf-kiosk-state {
+        padding-left: 0;
+        border-left: 0;
+    }
+}
+
 @media print {
     .mf-header,
     .mf-btn-row,
     .mf-filter-row,
     dialog.mf-dialog,
-    .mf-section-head .mf-btn {
+    .mf-section-head .mf-btn,
+    .mf-print-hide {
         display: none;
     }
 
     body {
         background: var(--mf-white);
+    }
+
+    /* Printing the dashboard means one thing: a fire register to carry to the
+       muster point. Drop the rail and let the name lists run full width. */
+    .mf-dash-grid {
+        display: block;
+    }
+
+    .mf-presence,
+    .mf-dept-card,
+    .mf-table-card {
+        box-shadow: none;
+        break-inside: avoid;
     }
 }

@@ -1,83 +1,271 @@
 {% extends "base.html" %}
 {% block title %}Dashboard &mdash; {{ app_name }}{% endblock %}
+{% block body_class %}mf-dash{% endblock %}
 
 {% block content %}
-<h1>Dashboard</h1>
-<p class="mf-subtitle">{{ today.strftime('%A %d %B %Y') }} &middot; times shown in {{ timezone_name }}</p>
-
-<div class="mf-grid">
-    <div class="mf-stat">
-        <div class="mf-stat-value">{{ on_site | length }}</div>
-        <div class="mf-stat-label">On site now</div>
+<div class="mf-page-head">
+    <div>
+        <h1>Clocking today</h1>
+        <p class="mf-subtitle">{{ today.strftime('%A %d %B %Y') }} &middot;
+            times shown in {{ timezone_name }}</p>
     </div>
-    <div class="mf-stat">
-        <div class="mf-stat-value">{{ active_count }}</div>
-        <div class="mf-stat-label">Active employees</div>
-    </div>
-    <div class="mf-stat">
-        <div class="mf-stat-value">{{ enrolled_count }}</div>
-        <div class="mf-stat-label">Faces enrolled</div>
-    </div>
-    <div class="mf-stat">
-        <div class="mf-stat-value">{{ index_size }}</div>
-        <div class="mf-stat-label">Templates in index</div>
+    <div class="mf-page-aside mf-print-hide">
+        <div>
+            <div class="mf-live-clock" id="mf-clock">{{ now.strftime('%H:%M') }}</div>
+            <div class="mf-note">
+                {%- if refresh_seconds %}Refreshes every {{ refresh_seconds }} seconds
+                {%- else %}Refresh for the latest{% endif %}</div>
+        </div>
+        <div class="mf-kiosk-state">
+            <div class="mf-kiosk-state-line">
+                <span class="mf-dot {{ 'mf-dot-live' if kiosk.is_live else '' }}"></span>
+                {{ kiosk.device or 'Kiosk' }}
+                {%- if kiosk.is_live %} active{% else %} quiet{% endif %}
+            </div>
+            <div class="mf-note">Last scan {{ kiosk.since_text }}</div>
+        </div>
     </div>
 </div>
 
-{% if active_count and enrolled_count < active_count %}
-<div class="mf-flash mf-flash-warning">
-    {{ active_count - enrolled_count }} active employee(s) have no face enrolled and cannot
-    use the kiosk. <a href="{{ url_for('admin.employees') }}">Review the list</a>.
-</div>
-{% endif %}
+<div class="mf-dash-grid">
+    <div>
+        {# --- Who is in the building ------------------------------------- #}
+        <div class="mf-presence">
+            <div class="mf-presence-figure">
+                <div class="mf-stat-label">On site now</div>
+                <div class="mf-presence-count">
+                    <b>{{ presence.on_site | length }}</b>
+                    <span>of {{ presence.expected }}</span>
+                </div>
+                <button class="mf-btn mf-btn-secondary mf-print-hide" type="button"
+                        id="mf-print-register">Print fire register</button>
+            </div>
+            <div class="mf-presence-split">
+                <div class="mf-presence-bar">
+                    <span class="mf-swatch-on-site" style="width: {{ presence.share(presence.on_site) }}%"></span>
+                    <span class="mf-swatch-left" style="width: {{ presence.share(presence.left) }}%"></span>
+                    <span class="mf-swatch-not-due" style="width: {{ presence.share(presence.not_due) }}%"></span>
+                    <span class="mf-swatch-overdue" style="width: {{ presence.share(presence.overdue) }}%"></span>
+                </div>
+                <div class="mf-presence-key">
+                    <a href="{{ url_for('admin.absence') }}">
+                        <span><span class="mf-swatch mf-swatch-on-site"></span>On site</span>
+                        <b>{{ presence.on_site | length }}</b>
+                    </a>
+                    <a href="{{ url_for('admin.absence') }}">
+                        <span><span class="mf-swatch mf-swatch-left"></span>Finished for the day</span>
+                        <b>{{ presence.left | length }}</b>
+                    </a>
+                    <a href="{{ url_for('admin.absence') }}">
+                        <span><span class="mf-swatch mf-swatch-not-due"></span>Not due yet</span>
+                        <b>{{ presence.not_due | length }}</b>
+                    </a>
+                    <a href="{{ url_for('admin.absence') }}">
+                        <span><span class="mf-swatch mf-swatch-overdue"></span>Not clocked in</span>
+                        <b class="{{ 'mf-count-alert' if presence.overdue else '' }}">{{ presence.overdue | length }}</b>
+                    </a>
+                </div>
+            </div>
+        </div>
 
-<div class="mf-card">
-    <h2 style="margin-top: 0;">On site now</h2>
-    {% if on_site %}
-    <p>
-        {% for person in on_site %}
-        <span class="mf-badge mf-badge-in">{{ person.full_name }}</span>
-        {% endfor %}
-    </p>
-    <p class="mf-note">Use this as the fire register. It reflects whoever&rsquo;s most recent
-        entry is a clock-in.</p>
-    {% else %}
-    <p class="mf-empty">Nobody is currently clocked in.</p>
-    {% endif %}
-    <p class="mf-note"><a href="{{ url_for('admin.absence') }}">Who has not clocked in today</a></p>
-</div>
+        {# --- The three things worth chasing ----------------------------- #}
+        <div class="mf-exceptions mf-print-hide">
+            <a class="mf-exception {{ 'mf-exception-danger' if presence.overdue else 'mf-exception-clear' }}"
+               href="{{ url_for('admin.absence') }}">
+                <div class="mf-exception-value">{{ presence.overdue | length }}</div>
+                <div class="mf-stat-label">Not clocked in</div>
+                <p class="mf-note">
+                    {%- if presence.overdue %}
+                    {{ presence.overdue[:3] | map(attribute='employee.last_name') | join(', ') }}
+                    {%- if presence.overdue | length > 3 %} and {{ presence.overdue | length - 3 }} more{% endif %}
+                    {%- else %}Everybody due is here{% endif %}</p>
+            </a>
+            <a class="mf-exception {{ 'mf-exception-warn' if missed_clockouts else 'mf-exception-clear' }}"
+               href="{{ url_for('admin.timesheets') }}">
+                <div class="mf-exception-value">{{ missed_clockouts | length }}</div>
+                <div class="mf-stat-label">Missed clock-outs</div>
+                <p class="mf-note">
+                    {%- if missed_clockouts %}Last {{ missed_clockout_days }} days &mdash; paid to the shift end
+                    {%- else %}Nothing to correct{% endif %}</p>
+            </a>
+            <a class="mf-exception {{ '' if kiosk.to_enrol else 'mf-exception-clear' }}"
+               href="{{ url_for('admin.employees') }}">
+                <div class="mf-exception-value">{{ kiosk.to_enrol }}</div>
+                <div class="mf-stat-label">Faces to enrol</div>
+                <p class="mf-note">
+                    {%- if kiosk.to_enrol %}Cannot use the kiosk yet
+                    {%- else %}Everybody active is enrolled{% endif %}</p>
+            </a>
+        </div>
 
-<div class="mf-card">
-    <h2 style="margin-top: 0;">Latest activity</h2>
-    {% if recent %}
-    <div class="mf-table-wrap">
-        <table class="mf-table">
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Employee</th>
-                    <th>Direction</th>
-                    <th>Method</th>
-                    <th>Confidence</th>
-                    <th>Device</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for event in recent %}
-                <tr>
-                    <td>{{ event.occurred_at | localtime }}</td>
-                    <td><a href="{{ url_for('admin.employee_detail', employee_id=event.employee_id) }}">{{ event.employee.full_name }}</a></td>
-                    <td><span class="mf-badge mf-badge-{{ event.direction }}">{{ 'In' if event.direction == 'in' else 'Out' }}</span></td>
-                    <td>{{ event.method }}</td>
-                    <td>{{ '%.3f' | format(event.confidence) if event.confidence else '&mdash;' | safe }}</td>
-                    <td>{{ event.device_label or '' }}</td>
-                </tr>
+        {# --- One table for both kinds of problem ------------------------ #}
+        <div class="mf-section-head" style="margin: 0 0 .75rem;">
+            <h2>Needs attention today</h2>
+            <a class="mf-btn mf-btn-secondary" href="{{ url_for('admin.event_manual') }}">Add a missed clocking</a>
+        </div>
+        {% if attention %}
+        <div class="mf-table-card">
+            <table class="mf-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Department</th>
+                        <th>Issue</th>
+                        <th>Due to start</th>
+                        <th>Last clocking</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in attention %}
+                    <tr class="{{ 'mf-row-issue' if row.issue.startswith('No clock-out') else '' }}">
+                        <td><a href="{{ url_for('admin.employee_detail', employee_id=row.employee.id) }}">{{ row.employee.full_name }}</a></td>
+                        <td>{{ row.employee.department or '' }}</td>
+                        <td><span class="mf-badge mf-badge-{{ row.severity }}">{{ row.issue }}</span></td>
+                        <td>{{ row.due_to_start.strftime('%H:%M') if row.due_to_start else '' }}</td>
+                        <td>
+                            {%- if row.last_clocking %}{{ row.last_clocking | localtime('%a %d %b %H:%M') }}
+                            {%- else %}<span class="mf-badge mf-badge-danger">Never</span>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="mf-card"><p class="mf-empty">Nothing needs attention. Everybody due today has
+            clocked in, and no shift in the last {{ missed_clockout_days }} days is missing its
+            clock-out.</p></div>
+        {% endif %}
+        <p class="mf-note" style="margin: .75rem 0 0;">Overdue is measured against each
+            person&rsquo;s own shift start, so an afternoon shift is not late at nine in the
+            morning. A missed clock-out is paid to the shift end until it is corrected.
+            <a href="{{ url_for('admin.absence') }}">Absence for today</a> &middot;
+            <a href="{{ url_for('admin.timesheets') }}">Timesheet warnings</a></p>
+
+        {# --- The fire register ------------------------------------------ #}
+        <div class="mf-section-head" style="margin: 2rem 0 .75rem;">
+            <h2>On site now, by department</h2>
+            <span class="mf-note">Use as the fire register</span>
+        </div>
+        <div class="mf-dept-card">
+            {% if presence.on_site %}
+            <div class="mf-dept-grid">
+                {% for dept in departments %}
+                <div>
+                    <div class="mf-dept-head">
+                        <span>{{ dept.name }}</span>
+                        <span class="mf-note">{{ dept.on_site | length }} / {{ dept.headcount }}</span>
+                    </div>
+                    <div class="mf-dept-names">
+                        {% for person in dept.on_site %}
+                        <span class="mf-badge mf-badge-in">{{ person.full_name }}</span>
+                        {% else %}
+                        <span class="mf-note">Nobody on site</span>
+                        {% endfor %}
+                    </div>
+                </div>
                 {% endfor %}
-            </tbody>
-        </table>
+            </div>
+            {% else %}
+            <p class="mf-empty">Nobody is currently clocked in.</p>
+            {% endif %}
+            <p class="mf-note" style="margin: 1.25rem 0 0;">Reflects whoever&rsquo;s most recent
+                entry is a clock-in. There is no booked-absence record in this system, so anybody
+                on holiday is counted as not due or not clocked in like everyone else.
+                <a href="{{ url_for('admin.absence') }}">Who has not clocked in today</a></p>
+        </div>
+
+        {# --- The live feed ----------------------------------------------- #}
+        <div class="mf-section-head mf-print-hide" style="margin: 2rem 0 .75rem;">
+            <h2>Latest activity</h2>
+            <a href="{{ url_for('admin.timesheets') }}" style="font-size: .9rem;">Full timesheet detail</a>
+        </div>
+        <div class="mf-print-hide">
+            {% if recent %}
+            <div class="mf-table-card">
+                <table class="mf-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Employee</th>
+                            <th>Direction</th>
+                            <th>Method</th>
+                            <th>Confidence</th>
+                            <th>Device</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in recent %}
+                        <tr>
+                            <td>{{ event.occurred_at | localtime }}</td>
+                            <td><a href="{{ url_for('admin.employee_detail', employee_id=event.employee_id) }}">{{ event.employee.full_name }}</a></td>
+                            <td><span class="mf-badge mf-badge-{{ event.direction }}">{{ 'In' if event.direction == 'in' else 'Out' }}</span></td>
+                            <td>{{ event.method }}</td>
+                            <td>{{ '%.3f' | format(event.confidence) if event.confidence else '&mdash;' | safe }}</td>
+                            <td>{{ event.device_label or '' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="mf-card"><p class="mf-empty">No clocking activity yet.</p></div>
+            {% endif %}
+        </div>
     </div>
-    {% else %}
-    <p class="mf-empty">No clocking activity yet.</p>
-    {% endif %}
+
+    {# --- The rail -------------------------------------------------------- #}
+    <div class="mf-print-hide">
+        <div class="mf-payroll">
+            <div class="mf-payroll-kicker">Payroll period {{ payroll.period }} &middot; four-weekly</div>
+            <div class="mf-payroll-dates">{{ payroll.start.strftime('%d %b') }} &ndash;
+                {{ payroll.end.strftime('%d %b') }}</div>
+            <div class="mf-payroll-week">Week {{ payroll.week }} of 4</div>
+            <div class="mf-payroll-weeks">
+                {% for state in payroll.week_states %}<span class="{{ state }}"></span>{% endfor %}
+            </div>
+            <div class="mf-kv">
+                <div><span>Rows ready</span><b>{{ payroll.rows_ready }} / {{ payroll.on_sheet }}</b></div>
+                <div><span>Warnings to clear</span>
+                    <b class="{{ 'mf-figure-warn' if payroll.warnings else '' }}">{{ payroll.warnings }}</b></div>
+                <div><span>Missing pay rate</span>
+                    <b class="{{ 'mf-figure-danger' if payroll.missing_rate else '' }}">{{ payroll.missing_rate }}</b></div>
+                <div><span>Overtime so far</span><b>{{ '%g' | format(payroll.overtime_hours) }} h</b></div>
+            </div>
+            <a class="mf-btn"
+               href="{{ url_for('admin.timesheets_master_xlsx', start=payroll.start.isoformat(), end=payroll.end.isoformat(), period=payroll.period) }}">
+                Payroll master sheet
+            </a>
+            <p class="mf-payroll-foot">Excel, one row per employee &middot;
+                figures cover {{ payroll.start.strftime('%d/%m') }} to {{ payroll.covered_to.strftime('%d/%m') }}</p>
+        </div>
+
+        <div class="mf-panel">
+            <h2>Jump to</h2>
+            <div class="mf-jump">
+                <a href="{{ url_for('admin.absence') }}">Absence &mdash; today and this week</a>
+                <a href="{{ url_for('admin.timesheets') }}">Timesheets and warnings</a>
+                <a href="{{ url_for('admin.event_manual') }}">Manual entry</a>
+                <a href="{{ url_for('admin.shifts') }}">Shifts &amp; hours standards</a>
+            </div>
+        </div>
+
+        <div class="mf-panel">
+            <h2>Kiosk and recognition</h2>
+            <div class="mf-kv">
+                <div><span>{{ kiosk.device or 'Kiosk' }}</span>
+                    <span class="mf-badge {{ 'mf-badge-in' if kiosk.is_live else '' }}">{{ 'Active' if kiosk.is_live else 'Quiet' }}</span></div>
+                <div><span>Faces enrolled</span><b>{{ kiosk.enrolled }} / {{ kiosk.active }}</b></div>
+                <div><span>Templates in index</span><b>{{ kiosk.index_size }}</b></div>
+                <div><span>Last scan</span><b>{{ kiosk.since_text }}</b></div>
+            </div>
+            <a href="{{ url_for('admin.camera_check') }}"
+               style="display: inline-block; margin-top: .85rem; font-size: .9rem;">Camera check</a>
+        </div>
+    </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"
+        data-refresh-seconds="{{ refresh_seconds }}" defer></script>
 {% endblock %}

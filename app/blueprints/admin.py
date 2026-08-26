@@ -48,6 +48,7 @@ from ..models import (
     visible_employee_clause,
 )
 from ..services import attendance
+from ..services import dashboard as dashboard_service
 from ..services.enrolment import enrol_employee, remove_enrolment
 from ..services.payrates import PayRateError, parse_rate, rate_text
 from ..services.payroll_sheet import (
@@ -261,32 +262,49 @@ def _working_week_choices() -> list[tuple[int, str]]:
 # --------------------------------------------------------------------------
 @bp.get("/")
 def dashboard():
+    """The morning question: is anything wrong?
+
+    Everything on the page is either an exception or the figure an exception is
+    measured against, and each one links to the page that can fix it. The work
+    is in services/dashboard.py; this only wires it to the template.
+    """
     tz = _tz()
-    today = dt.datetime.now(tz).date()
-    on_site = attendance.currently_on_site()
+    now = dt.datetime.now(tz)
+    today = now.date()
+
+    records = dashboard_service.presence(today, tz)
+    shifts = dashboard_service.missed_clockouts(tz, today)
 
     recent = db.session.scalars(
         select(AttendanceEvent)
         .join(Employee)
         .where(AttendanceEvent.is_voided.is_(False), visible_employee_clause())
         .order_by(AttendanceEvent.occurred_at.desc())
-        .limit(15)
+        .limit(12)
     ).all()
 
     employees = db.session.scalars(
         select(Employee).where(visible_employee_clause())
     ).all()
-    index = get_index()
 
     return render_template(
         "admin/dashboard.html",
         today=today,
-        on_site=on_site,
+        now=now,
+        presence=records,
+        departments=dashboard_service.by_department(records),
+        attention=dashboard_service.attention(records, shifts, today, tz),
+        missed_clockouts=shifts,
+        missed_clockout_days=dashboard_service.MISSED_CLOCKOUT_DAYS,
         recent=recent,
-        employee_count=len(employees),
-        active_count=sum(1 for e in employees if e.is_active),
-        enrolled_count=sum(1 for e in employees if e.is_enrolled),
-        index_size=index.size,
+        kiosk=dashboard_service.kiosk(list(employees), get_index().size),
+        payroll=dashboard_service.payroll(
+            today,
+            tz,
+            _parse_date(current_app.config["PAYROLL_PERIOD_1_START"], dt.date(2026, 3, 30)),
+            current_app.config["PAYROLL_PERIODS_PER_YEAR"],
+        ),
+        refresh_seconds=current_app.config["DASHBOARD_REFRESH_SECONDS"],
     )
 
 

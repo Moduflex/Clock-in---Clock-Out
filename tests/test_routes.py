@@ -40,6 +40,50 @@ def test_login_succeeds_and_dashboard_loads(logged_in):
     assert b"Dashboard" in response.data
 
 
+def test_dashboard_leads_with_the_exceptions(logged_in, db):
+    """The page has to answer "is anything wrong?" above anything else."""
+    make_employee(db)
+    body = logged_in.get("/admin/").data.decode("utf-8")
+
+    for heading in (
+        "Clocking today",
+        "On site now",
+        "Not clocked in",
+        "Missed clock-outs",
+        "Faces to enrol",
+        "Needs attention today",
+        "Payroll period",
+    ):
+        assert heading in body, f"{heading!r} missing from the dashboard"
+
+
+def test_dashboard_flags_an_employee_with_no_shift_pattern(logged_in, db):
+    """No shift means nothing to wait for, so they are expected straight away.
+
+    The row says "Not clocked in" rather than "0m overdue": there is no start
+    time to be late against.
+    """
+    make_employee(db)
+    body = logged_in.get("/admin/").data.decode("utf-8")
+
+    assert '<span class="mf-badge mf-badge-warn">Not clocked in</span>' in body
+    assert "overdue</span>" not in body
+    assert "Nobody is currently clocked in" in body
+
+
+def test_every_page_carries_the_logo_and_the_signed_in_name(logged_in, db):
+    """A shared office machine should say whose name goes against an entry."""
+    body = logged_in.get("/admin/").data.decode("utf-8")
+
+    assert "img/logo.png" in body
+    assert "Signed in as" in body
+    assert "Office" in body  # the admin fixture's full name
+
+
+def test_the_sign_in_page_carries_the_logo_too(client):
+    assert b"img/logo.png" in client.get("/login").data
+
+
 def test_login_rejects_a_wrong_password(client, admin):
     response = client.post("/login", data={"username": "office", "password": "wrong-password"})
     assert response.status_code == 401

@@ -7,24 +7,36 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/moduflex.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
+{% macro nav_link(endpoint, label) %}
+<a href="{{ url_for(endpoint) }}"
+   class="{{ 'is-active' if request.endpoint == endpoint else '' }}">{{ label }}</a>
+{% endmacro %}
+
 {% block header %}
 <header class="mf-header">
-    <a class="mf-brand" href="{{ url_for('admin.dashboard') }}">{{ app_name }}</a>
+    <a href="{{ url_for('admin.dashboard') }}">
+        <img class="mf-logo" src="{{ url_for('static', filename='img/logo.png') }}"
+             alt="{{ app_name }}">
+    </a>
     {% if current_user.is_authenticated %}
     <nav class="mf-nav">
-        <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
-        <a href="{{ url_for('admin.employees') }}">Employees</a>
-        <a href="{{ url_for('admin.absence') }}">Absence</a>
-        <a href="{{ url_for('admin.timesheets') }}">Timesheets</a>
-        <a href="{{ url_for('admin.shifts') }}">Shifts &amp; hours</a>
-        <a href="{{ url_for('admin.event_manual') }}">Manual entry</a>
-        <a href="{{ url_for('admin.camera_check') }}">Camera check</a>
-        <a href="{{ url_for('kiosk.index') }}">Kiosk</a>
+        {{ nav_link('admin.dashboard', 'Dashboard') }}
+        {{ nav_link('admin.employees', 'Employees') }}
+        {{ nav_link('admin.absence', 'Absence') }}
+        {{ nav_link('admin.timesheets', 'Timesheets') }}
+        {{ nav_link('admin.shifts', 'Shifts &amp; hours' | safe) }}
+        {{ nav_link('admin.event_manual', 'Manual entry') }}
+        {{ nav_link('admin.camera_check', 'Camera check') }}
+        {{ nav_link('kiosk.index', 'Kiosk') }}
     </nav>
-    <form method="post" action="{{ url_for('auth.logout') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="mf-btn mf-btn-secondary" type="submit">Sign out</button>
-    </form>
+    <div class="mf-header-user">
+        <span class="mf-note">Signed in as
+            <strong>{{ current_user.full_name or current_user.username }}</strong></span>
+        <form method="post" action="{{ url_for('auth.logout') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="mf-btn mf-btn-secondary" type="submit">Sign out</button>
+        </form>
+    </div>
     {% endif %}
 </header>
 {% endblock %}

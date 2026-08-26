@@ -24,6 +24,14 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
   keyboard works as the trigger. Escape cancels a pending automatic entry.
 
 **Office** (`/admin`, login required)
+- Dashboard: the morning question, *is anything wrong?* One figure for who is
+  in the building against who was expected, split four ways; three exception
+  tiles (not clocked in, missed clock-outs, faces still to enrol); one
+  **Needs attention today** table carrying both kinds of problem; the fire
+  register grouped by department; the live clocking feed; and a payroll
+  readiness card for the running four-weekly period. Every figure links to the
+  page that can fix the thing it counts. See
+  [The dashboard](#the-dashboard).
 - Employees: add, edit, search, deactivate.
 - Enrolment: capture several face samples through the browser, with checks that
   they are all the same person and not somebody already enrolled.
@@ -348,6 +356,67 @@ without it a Hello dongle cannot be used for clocking at all.
 **Better hardware, if you get the choice.** A reader that matches on-device and
 reports a slot number (R307 and similar, around £15) has neither the ten-person
 limit nor the shared-login problem, and needs no elevation.
+
+---
+
+## The dashboard
+
+`/admin` answers one question — **is anything wrong this morning?** Everything on
+it is either an exception or the figure an exception is measured against, and
+each one is a link to the page that can fix it.
+
+**Who is in the building.** One large figure, *on site now* against everyone
+expected today, with a bar splitting the day the same four ways the Absence page
+already names:
+
+| State | Meaning |
+|---|---|
+| On site | Their last clocking was an IN. |
+| Finished for the day | They clocked in and out again. |
+| Not due yet | Nothing recorded, but their shift has not started. |
+| Not clocked in | Nothing recorded and their shift started a while ago. |
+
+There is **no booked-absence record** in this system, so nobody is shown as on
+holiday. Somebody who is off is counted as not due or not clocked in like anyone
+else, and the page says so rather than implying a leave calendar exists.
+
+**The three tiles.** Not clocked in (red, with the first few surnames), missed
+clock-outs (amber), and faces still to enrol (blue — something to get round to,
+not something to chase this morning). Red, amber and blue are kept meaning
+different things so the colour is worth reading.
+
+**Needs attention today** puts both kinds of problem in one table, worst first,
+because an office looking for what to fix should not have to read two lists to
+find it. Overdue is measured against each person's *own* shift start, so an
+afternoon shift is not late at nine in the morning, and it turns from amber to
+red at two hours. A missed clock-out is a shift whose clock-out never happened
+*and* whose shift end has passed — somebody halfway through a shift has no
+leaving time yet and is not a problem. Those rows are shaded the way the
+timesheet shades them, and the window is the last 7 days.
+
+**Print fire register** prints the page as a register to carry to the muster
+point: the date, the headcount, who needs chasing, and who is in the building by
+department. The payroll rail, the tiles and the activity feed come off the
+printed copy.
+
+**Payroll readiness** covers the four-weekly period *in progress*, counted from
+the start of the period to today — the question being asked in week 2 is "what
+will I have to chase when this closes", and a fortnight that has not happened
+yet cannot be short of anything. Rows ready, warnings to clear, missing pay
+rates and overtime so far, with a button straight to the master sheet for that
+period. A shift somebody is **still working** is not counted as a warning;
+otherwise half the shop floor would read as a payroll problem every morning.
+
+**Kiosk and recognition** reports the last scan and how long ago it was. There
+is no heartbeat in this system, so a quiet kiosk is reported as *quiet* and
+never as *offline* — that would be a guess dressed up as a fact. A manual entry
+typed in the office does not count as a scan, because it says nothing about
+whether the screen in the workshop is working.
+
+The page reloads itself so a screen left open on it stays current. Each reload
+re-reads the running payroll period, so raise `DASHBOARD_REFRESH_SECONDS` (or
+set it to `0` to turn the reload off) if the page is left up all day on a slow
+connection.
 
 ---
 
@@ -1057,6 +1126,7 @@ already states intent.
 | `app/face/liveness.py` | The presentation-attack deterrent. |
 | `app/services/recognition.py` | Ties the engine and index to Flask and MySQL. |
 | `app/services/attendance.py` | Alternation and cooldown rules, and the daily present/absent split. |
+| `app/services/dashboard.py` | The office dashboard: the four presence states, the exceptions, payroll readiness and kiosk state. |
 | `app/services/enrolment.py` | Enrolment with same-person and duplicate checks. |
 | `app/services/timesheet.py` | Pairing events into shifts, paid hours, Monday–Sunday weeks, the standard/overtime split, CSV, timezones. |
 | `app/services/payroll_sheet.py` | The four-weekly master sheet: the payroll workbook's layout, and its live formulas. |

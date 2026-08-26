@@ -166,6 +166,22 @@ def payroll_period(start: dt.date, anchor: dt.date, periods_per_year: int = 13) 
     return (elapsed // PERIOD_DAYS) % periods_per_year + 1
 
 
+def period_bounds(
+    day: dt.date, anchor: dt.date, periods_per_year: int = 13
+) -> tuple[int, dt.date, dt.date]:
+    """The four-weekly period *day* falls in: its number, first and last day.
+
+    Counted from the same anchor as :func:`payroll_period`, so the number this
+    returns and the one written on an exported sheet cannot disagree. Floor
+    division is deliberate: a day before the anchor belongs to the period
+    running up to it, not to period 1.
+    """
+    index = (day - anchor).days // PERIOD_DAYS
+    start = anchor + dt.timedelta(days=index * PERIOD_DAYS)
+    end = start + dt.timedelta(days=PERIOD_DAYS - 1)
+    return payroll_period(start, anchor, periods_per_year), start, end
+
+
 def _short(day: dt.date) -> str:
     return day.strftime("%d/%m/%y")
 

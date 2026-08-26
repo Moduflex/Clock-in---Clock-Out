@@ -3,7 +3,8 @@
 
 {% block header %}
 <header class="mf-header">
-    <span class="mf-brand">{{ app_name }}</span>
+    <img class="mf-logo" src="{{ url_for('static', filename='img/logo.png') }}"
+         alt="{{ app_name }}">
 </header>
 {% endblock %}
 

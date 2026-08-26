@@ -115,6 +115,12 @@ class Config:
     PAYROLL_PERIODS_PER_YEAR = _int("PAYROLL_PERIODS_PER_YEAR", 13)
     PAYROLL_COMPANY_NAME = os.getenv("PAYROLL_COMPANY_NAME", "Moduflex Ltd")
 
+    # --- Dashboard --------------------------------------------------------
+    # The office dashboard reloads itself so a screen left open on it stays
+    # current. Each reload re-reads the running payroll period, so raise this
+    # if the page is left up all day on a slow connection. 0 turns it off.
+    DASHBOARD_REFRESH_SECONDS = _int("DASHBOARD_REFRESH_SECONDS", 30)
+
     # --- Kiosk ------------------------------------------------------------
     KIOSK_TOKEN = os.getenv("KIOSK_TOKEN", "")
     KIOSK_DEVICE_LABEL = os.getenv("KIOSK_DEVICE_LABEL", "Kiosk")
