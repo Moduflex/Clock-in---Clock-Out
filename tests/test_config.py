@@ -7,9 +7,11 @@ pin down the exact arguments that were verified against a real server.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from app.config import Config
+from app.config import BASE_DIR, Config
 
 
 def _config(**overrides) -> Config:
@@ -85,6 +87,130 @@ def test_a_ca_certificate_is_passed_through_when_given():
         MYSQL_SSL_CA="C:/certs/ca-certificate.crt",
     ).mysql_connect_args
     assert args["ssl_ca"] == "C:/certs/ca-certificate.crt"
+
+
+# --- supplying the CA a managed database signs with ---------------------------
+# Without one of these, verify-identity checks the server against the machine's
+# own trust store, which holds no managed provider's private CA - so the
+# handshake fails with "self-signed certificate in certificate chain", and it
+# fails on the first query rather than at start-up, surfacing as a 500 on the
+# login page with nothing to connect it to the database configuration.
+PEM = "-----BEGIN CERTIFICATE-----\nMIIBex\n-----END CERTIFICATE-----"
+
+
+def _fresh(config: Config) -> Config:
+    """Forget any certificate a previous test wrote; each process writes once."""
+    Config._ca_pem_file = None
+    return config
+
+
+def test_a_relative_ca_path_is_anchored_to_the_project():
+    """So a certificate committed to the repo works on a dyno and on Windows."""
+    args = _config(
+        MYSQL_HOST="db.example.com",
+        MYSQL_SSL_MODE="verify-identity",
+        MYSQL_SSL_CA="certs/do-ca.crt",
+    ).mysql_connect_args
+
+    assert Path(args["ssl_ca"]) == BASE_DIR / "certs" / "do-ca.crt"
+    assert Path(args["ssl_ca"]).is_absolute()
+
+
+def test_a_certificate_given_as_text_is_written_to_a_file():
+    """Platforms with config vars and no filesystem paste the PEM instead."""
+    config = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA_PEM=PEM,
+        )
+    )
+
+    ca_file = Path(config.mysql_connect_args["ssl_ca"])
+
+    assert ca_file.is_file()
+    assert ca_file.read_text().strip() == PEM
+    Config._ca_pem_file = None
+
+
+def test_escaped_newlines_in_a_pasted_certificate_are_repaired():
+    """A config var pasted carelessly arrives with literal backslash-n."""
+    config = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA_PEM=PEM.replace("\n", "\\n"),
+        )
+    )
+
+    text = Path(config.mysql_connect_args["ssl_ca"]).read_text()
+
+    assert "\\n" not in text
+    assert text.strip() == PEM
+    Config._ca_pem_file = None
+
+
+def test_a_base64_encoded_certificate_is_decoded():
+    """Some platforms hand the certificate over base64-encoded, not as PEM.
+
+    DigitalOcean App Platform's CA_CERT binding is one. Getting this wrong
+    fails at the handshake with an error that says nothing about the
+    certificate being unreadable.
+    """
+    import base64
+
+    config = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA_PEM=base64.b64encode(PEM.encode()).decode(),
+        )
+    )
+
+    assert Path(config.mysql_connect_args["ssl_ca"]).read_text().strip() == PEM
+    Config._ca_pem_file = None
+
+
+def test_an_unreadable_certificate_is_left_for_the_ssl_module_to_report():
+    """Better a clear TLS error than a silently empty certificate file."""
+    config = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA_PEM="not a certificate at all",
+        )
+    )
+
+    written = Path(config.mysql_connect_args["ssl_ca"]).read_text()
+
+    assert written.strip() == "not a certificate at all"
+    Config._ca_pem_file = None
+
+
+def test_a_path_wins_over_pasted_text_when_both_are_set():
+    args = _fresh(
+        _config(
+            MYSQL_HOST="db.example.com",
+            MYSQL_SSL_MODE="verify-identity",
+            MYSQL_SSL_CA="C:/certs/ca-certificate.crt",
+            MYSQL_SSL_CA_PEM=PEM,
+        )
+    ).mysql_connect_args
+
+    assert args["ssl_ca"] == "C:/certs/ca-certificate.crt"
+    Config._ca_pem_file = None
+
+
+def test_required_mode_ignores_a_ca_because_it_does_not_verify():
+    """The documented escape hatch: encrypt, do not verify. Nothing to check."""
+    args = _config(
+        MYSQL_HOST="db.example.com",
+        MYSQL_SSL_MODE="required",
+        MYSQL_SSL_CA="C:/certs/ca-certificate.crt",
+    ).mysql_connect_args
+
+    assert args == {"ssl": {"ssl": True}}
+    assert "ssl_ca" not in args
 
 
 # --- engine options -----------------------------------------------------------

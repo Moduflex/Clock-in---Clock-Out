@@ -21,6 +21,7 @@ def create_app(config: Config | str | None = None) -> Flask:
     app.config["SQLALCHEMY_DATABASE_URI"] = settings.SQLALCHEMY_DATABASE_URI
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = settings.SQLALCHEMY_ENGINE_OPTIONS
     app.config["MYSQL_SSL_MODE_EFFECTIVE"] = settings.mysql_ssl_mode
+    app.config["MYSQL_SSL_CA_FILE"] = settings.mysql_ca_file
 
     _configure_logging(app)
     _warn_on_weak_secrets(app)
@@ -109,6 +110,7 @@ def _warn_on_weak_secrets(app: Flask) -> None:
         )
 
     _check_database_encryption(app)
+    _warn_on_unverifiable_database_cert(app)
 
 
 def _check_database_encryption(app: Flask) -> None:
@@ -130,6 +132,38 @@ def _check_database_encryption(app: Flask) -> None:
         "is not on this machine, so face templates and the database password "
         "would cross the network unencrypted. Set MYSQL_SSL_MODE=verify-identity "
         "in .env, or move the database onto this machine."
+    )
+
+
+def _warn_on_unverifiable_database_cert(app: Flask) -> None:
+    """Say at start-up when certificate verification cannot possibly succeed.
+
+    "verify-identity" with no CA configured verifies against the operating
+    system trust store. A managed database (DigitalOcean, RDS, Azure) signs its
+    certificate with the provider's own CA, which is not in that store, so the
+    handshake fails with "self-signed certificate in certificate chain" - and it
+    fails on the first *query*, not at start-up, so it surfaces as a 500 on the
+    login page with nothing to connect it to the database configuration.
+
+    This does not refuse to start: the certificate might genuinely be signed by
+    a public CA, and only the connection can settle that. It names the likely
+    cause up front so the log says so before anybody has to read a traceback.
+    """
+    if app.config.get("TESTING"):
+        return
+    if app.config.get("MYSQL_SSL_MODE_EFFECTIVE") != "verify-identity":
+        return
+    if app.config.get("MYSQL_SSL_CA_FILE"):
+        return
+
+    app.logger.warning(
+        "Database TLS is set to verify-identity but no CA certificate is "
+        "configured (MYSQL_SSL_CA or MYSQL_SSL_CA_PEM), so the server's "
+        "certificate is checked against this machine's trust store. A managed "
+        "database signs with the provider's own CA, which is not in that store, "
+        "and the connection will fail with 'self-signed certificate in "
+        "certificate chain'. Supply the provider's CA certificate, or set "
+        "MYSQL_SSL_MODE=required to encrypt without verifying."
     )
 
 

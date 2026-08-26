@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -34,6 +35,41 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+_PEM_HEADER = "-----BEGIN"
+
+
+def _certificate_text(raw: str) -> str:
+    """Normalise a certificate that arrived through an environment variable.
+
+    Three shapes turn up in the wild and all three have to work, because
+    getting this wrong fails at the TLS handshake with an error that says
+    nothing about the certificate being malformed:
+
+    * proper PEM, pasted straight from the provider's control panel;
+    * PEM whose newlines have been flattened to the literal two characters
+      ``\\n``, which is what happens when a multi-line value is pasted into a
+      single-line config field;
+    * base64 of the whole PEM file, which is how some platforms hand a
+      certificate to an application (DigitalOcean App Platform's ``CA_CERT``
+      binding among them).
+    """
+    text = raw.strip()
+    if _PEM_HEADER not in text:
+        # No header at all: assume the whole file has been base64-encoded.
+        # Left alone if it will not decode, so a malformed value still reaches
+        # the ssl module and is reported there rather than silently emptied.
+        import base64
+        import binascii
+
+        try:
+            decoded = base64.b64decode(text, validate=True).decode("ascii")
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            decoded = ""
+        if _PEM_HEADER in decoded:
+            text = decoded.strip()
+    return text.replace("\\n", "\n").strip() + "\n"
+
+
 class Config:
     """Base configuration shared by every environment."""
 
@@ -48,7 +84,16 @@ class Config:
 
     # TLS to the database. "" means "decide from the host" - see mysql_ssl_mode.
     MYSQL_SSL_MODE = (os.getenv("MYSQL_SSL_MODE") or "").strip().lower()
+    # Path to the CA certificate that signed the database server's certificate.
+    # A relative path is resolved against the project root, so a cert committed
+    # to the repository works the same on Windows and on a platform dyno.
     MYSQL_SSL_CA = (os.getenv("MYSQL_SSL_CA") or "").strip()
+    # The same certificate as PEM text rather than a path. Managed providers
+    # hand you the certificate in their control panel, and a platform with
+    # config vars and no persistent filesystem (Heroku, Render, Fly) has
+    # nowhere to put a file - so this pastes straight into a config var. It is
+    # a public certificate, not a secret.
+    MYSQL_SSL_CA_PEM = (os.getenv("MYSQL_SSL_CA_PEM") or "").strip()
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
@@ -245,6 +290,9 @@ class Config:
 
     LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
+    #: Where MYSQL_SSL_CA_PEM was written, so it is written once per process.
+    _ca_pem_file: str | None = None
+
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:  # noqa: N802 - Flask config name
         return (
@@ -267,6 +315,35 @@ class Config:
         return "disabled" if self.MYSQL_HOST in self.LOCAL_HOSTS else "verify-identity"
 
     @property
+    def mysql_ca_file(self) -> str:
+        """The CA certificate as a path on disk, or "" if none was configured.
+
+        Accepts either a path (``MYSQL_SSL_CA``) or the certificate text
+        (``MYSQL_SSL_CA_PEM``); the text is written to a temporary file once per
+        process, because PyMySQL and the ssl module both want a filename.
+        """
+        if self.MYSQL_SSL_CA:
+            # An absolute path is passed through exactly as given; only a
+            # relative one is anchored, so nothing already working changes.
+            if Path(self.MYSQL_SSL_CA).is_absolute():
+                return self.MYSQL_SSL_CA
+            return str(BASE_DIR / self.MYSQL_SSL_CA)
+
+        if not self.MYSQL_SSL_CA_PEM:
+            return ""
+
+        cached = Config._ca_pem_file
+        if cached is not None and Path(cached).is_file():
+            return cached
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".crt", prefix="mysql-ca-", delete=False, encoding="ascii"
+        )
+        with handle:
+            handle.write(_certificate_text(self.MYSQL_SSL_CA_PEM))
+        Config._ca_pem_file = handle.name
+        return handle.name
+
+    @property
     def mysql_connect_args(self) -> dict:
         """PyMySQL connect arguments implementing :attr:`mysql_ssl_mode`.
 
@@ -284,8 +361,14 @@ class Config:
         if mode == "verify-identity":
             args["ssl_verify_cert"] = True
             args["ssl_verify_identity"] = True
-            if self.MYSQL_SSL_CA:
-                args["ssl_ca"] = self.MYSQL_SSL_CA
+            # Without a CA, PyMySQL verifies against the operating system trust
+            # store, which does not contain the private CA a managed database
+            # (DigitalOcean, RDS, Azure) signs its certificate with - so the
+            # handshake fails with "self-signed certificate in certificate
+            # chain". See mysql_ca_file for the two ways of supplying it.
+            ca_file = self.mysql_ca_file
+            if ca_file:
+                args["ssl_ca"] = ca_file
         return args
 
     @property

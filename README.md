@@ -692,9 +692,48 @@ start if you point it at a remote database with TLS switched off.
 | `required` | Encrypt, but do not verify the certificate. Use only if verification fails and you accept the risk. |
 | `disabled` | No encryption. Acceptable only for a database on this machine. |
 
-If your provider issues its own CA certificate, download it and set
-`MYSQL_SSL_CA` to its path — for DigitalOcean it is `ca-certificate.crt` on the
-database's Connection Details page.
+**A managed database almost always needs its CA certificate supplying.** With
+`verify-identity` and no CA configured, the server's certificate is checked
+against *this machine's* trust store — which does not contain the provider's own
+private CA. The handshake then fails with:
+
+```
+ssl.SSLCertVerificationError: certificate verify failed:
+    self-signed certificate in certificate chain
+```
+
+and it fails on the first **query**, not at start-up, so it surfaces as a 500 on
+the login page with nothing to connect it to the database. The log now carries a
+warning at start-up when this configuration cannot possibly work.
+
+Supply the certificate in whichever way suits where the app runs. For
+DigitalOcean it is `ca-certificate.crt` on the database's Connection Details
+page; it is a public certificate, not a secret.
+
+| Setting | Use when |
+|---|---|
+| `MYSQL_SSL_CA=/path/to/ca-certificate.crt` | The file is on the server. An absolute path is used as given. |
+| `MYSQL_SSL_CA=certs/do-ca.crt` | The certificate is committed to the repository. Relative paths are resolved against the project root, so it works on Windows and on a dyno alike. |
+| `MYSQL_SSL_CA_PEM=-----BEGIN CERTIFICATE-----…` | A platform with config vars and no persistent filesystem (DigitalOcean App Platform, Heroku, Render, Fly). Paste the certificate text; it is written to a temporary file at start-up. |
+
+If both are set, the path wins. `MYSQL_SSL_CA_PEM` accepts the certificate as
+proper PEM, as PEM whose newlines have been flattened to a literal `\n`, or
+base64-encoded — because all three turn up depending on how the value reaches
+the app, and a certificate the TLS layer cannot read fails with an error that
+says nothing about the certificate.
+
+**On DigitalOcean App Platform** the environment is set in the app spec, not in
+`.env` — `.env` is deliberately git-ignored and never leaves your machine, so a
+setting added there works locally and does nothing once deployed. If the managed
+database is attached to the app as a component, App Platform can supply the
+certificate itself: set `MYSQL_SSL_CA_PEM` to the bindable value `${db.CA_CERT}`
+(replacing `db` with the component name) rather than pasting a copy that will go
+stale when the database's certificate is rotated.
+
+**To get running again in one step** while you sort the certificate out, set
+`MYSQL_SSL_MODE=required`. The connection is still encrypted; only the
+certificate check is skipped. That is weaker — it does not prove you are talking
+to your own database — so treat it as temporary rather than the finished state.
 
 To confirm a live connection really is encrypted:
 
