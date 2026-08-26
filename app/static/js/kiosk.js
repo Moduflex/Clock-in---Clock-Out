@@ -15,6 +15,12 @@
  *
  * The buttons remain available throughout, and take priority over the automatic
  * path - useful for the person who really is leaving straight after arriving.
+ *
+ * The payroll-number keypad is a third path that touches none of the above. It
+ * recognises nobody and needs no camera, which is the point: it is what somebody
+ * uses when the camera cannot see them. It is wired up outside the camera
+ * start-up promise for the same reason - if the camera fails, the keypad has to
+ * be the thing that still works.
  */
 (function () {
     "use strict";
@@ -36,6 +42,9 @@
     var dateEl = document.getElementById("kiosk-date");
     var modeEl = document.getElementById("kiosk-mode");
     var debugEl = document.getElementById("kiosk-debug");
+    var keypadInput = document.getElementById("keypad-input");
+    var keypadKeys = document.getElementById("keypad-keys");
+    var keypadGo = document.getElementById("keypad-go");
 
     var capture = new window.FaceCapture(video, { maxWidth: config.captureMaxWidth });
     var presence = new window.PresenceDetector(capture, {
@@ -657,9 +666,160 @@
         }
     }
 
+    /* --- Clocking by payroll number -------------------------------------- */
+    /* Three ways in, all landing on the same value:
+     *
+     *   touch / mouse   the on-screen keys, and tapping the box itself
+     *   keyboard        typing straight into the box, which is a real <input>
+     *   number pad      a digit pressed with nothing focused adopts the box, so
+     *                   a USB wedge clocks somebody without a finger going near
+     *                   the screen
+     *
+     * The keys stay folded away until somebody starts, because a permanent 4x3
+     * grid does not fit above the fold on a 720p kiosk screen.
+     */
+    var keypadBusy = false;
+
+    function keypadPresent() {
+        return Boolean(config.keypadMode && keypadInput);
+    }
+
+    function keypadValue() {
+        return (keypadInput.value || "").trim();
+    }
+
+    function paintKeypad() {
+        keypadGo.disabled = !keypadValue() || keypadBusy;
+    }
+
+    /* Unfold the keys and keep them out until the entry is finished with. They
+     * deliberately do NOT fold away on blur: tapping a key blurs the box for an
+     * instant, and a grid that flickered out from under a thumb would be worse
+     * than one that stays put. */
+    function openKeypad() {
+        keypadKeys.hidden = false;
+    }
+
+    function resetKeypad() {
+        keypadInput.value = "";
+        keypadKeys.hidden = true;
+        keypadInput.blur();
+        paintKeypad();
+    }
+
+    function keypadType(digit) {
+        if (keypadInput.value.length >= 32) {
+            return;
+        }
+        keypadInput.value += digit;
+        openKeypad();
+        paintKeypad();
+    }
+
+    function keypadBackspace() {
+        keypadInput.value = keypadInput.value.slice(0, -1);
+        paintKeypad();
+    }
+
+    function setKeypadBusy(isBusy) {
+        keypadBusy = isBusy;
+        keypadInput.disabled = isBusy;
+        keypadGo.textContent = isBusy ? "Clocking…" : "Clock";
+        paintKeypad();
+    }
+
+    function submitKeypad() {
+        var reference = keypadValue();
+        if (!reference || keypadBusy || busy) {
+            return;
+        }
+        /* A typed number is as deliberate as a button press, so it wins over
+         * whatever the automatic path is in the middle of. */
+        abandonPending();
+        setKeypadBusy(true);
+        setResult("", "Checking…", "Payroll number " + reference, "", "");
+
+        window
+            .postJson(
+                config.payrollUrl,
+                { payroll_ref: reference, direction: null },
+                { "X-Kiosk-Token": config.token }
+            )
+            .then(function (data) {
+                /* A number that was not recognised stays on screen, so a single
+                 * mistyped digit can be corrected instead of retyped. */
+                if (data && data.ok) {
+                    resetKeypad();
+                }
+                handleRecorded(data);
+            })
+            .catch(function (error) {
+                setResult("error", "Problem", error.message || "Please try again", "", "");
+                showResultFor(6);
+            })
+            .then(function () {
+                setKeypadBusy(false);
+            });
+    }
+
+    /* True when this key belongs to the box rather than to the kiosk at large.
+     * Space is the exception on purpose: a payroll number has no space in it, so
+     * a space arriving here is the footswitch being pressed with focus left in
+     * the box, and it has to reach the scan handler. */
+    function keypadWantsKey(event) {
+        return event.target === keypadInput && event.key !== " ";
+    }
+
+    function startKeypad() {
+        keypadInput.addEventListener("input", paintKeypad);
+        keypadInput.addEventListener("focus", openKeypad);
+
+        keypadInput.addEventListener("keydown", function (event) {
+            if (event.key === " ") {
+                /* Swallow the character, but let the event carry on bubbling to
+                 * the document handler so the footswitch still scans. */
+                event.preventDefault();
+                return;
+            }
+            event.stopPropagation();
+            if (event.key === "Enter") {
+                event.preventDefault();
+                submitKeypad();
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                resetKeypad();
+            }
+        });
+
+        /* One handler for the whole grid rather than twelve. Focus returns to
+         * the box after every key, so a mixed tap-then-type entry works. */
+        keypadKeys.addEventListener("click", function (event) {
+            var key = event.target.getAttribute("data-key");
+            if (key === null || keypadBusy) {
+                return;
+            }
+            if (key === "clear") {
+                keypadInput.value = "";
+                paintKeypad();
+            } else if (key === "back") {
+                keypadBackspace();
+            } else {
+                keypadType(key);
+            }
+            keypadInput.focus();
+        });
+
+        keypadGo.addEventListener("click", submitKeypad);
+        paintKeypad();
+    }
+
     /* --- Start up ------------------------------------------------------- */
     tickClock();
     window.setInterval(tickClock, 1000);
+
+    if (keypadPresent()) {
+        startKeypad();
+    }
 
     scanBtn.addEventListener("click", function () {
         manualScan(null);
@@ -675,9 +835,24 @@
     /* Space or Enter triggers a scan, so a cheap USB footswitch wired as a
      * keyboard works as the trigger. Escape cancels a pending automatic entry. */
     document.addEventListener("keydown", function (event) {
+        /* Never scan on a key meant for the payroll box. Its own handler stops
+         * propagation, so this is the belt to that braces - and it lets a
+         * footswitch press through, which keypadWantsKey() excludes. */
+        if (keypadPresent() && keypadWantsKey(event)) {
+            return;
+        }
         if (event.code === "Escape") {
             event.preventDefault();
             cancelPending();
+            return;
+        }
+        /* A digit typed with nothing focused adopts the payroll box. That is
+         * what makes a USB number pad work as a clocking device: press 0-4-2,
+         * press Enter, done, without anybody touching the screen. */
+        if (keypadPresent() && /^[0-9]$/.test(event.key) && !event.ctrlKey && !event.altKey) {
+            event.preventDefault();
+            keypadInput.focus();
+            keypadType(event.key);
             return;
         }
         if (event.code === "Space" || event.code === "Enter" || event.code === "NumpadEnter") {

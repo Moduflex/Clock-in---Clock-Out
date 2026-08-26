@@ -538,6 +538,9 @@ body.mf-kiosk {
     flex-direction: column;
     gap: 1rem;
     min-height: 0;
+    /* Backstop for a screen shorter than the rules below allow for. Scrolling a
+       kiosk panel is not nice, but a key nobody can reach is worse. */
+    overflow-y: auto;
 }
 
 .mf-kiosk-result {
@@ -677,6 +680,177 @@ body.mf-kiosk {
     font-size: 0.95rem;
     color: var(--mf-blue-100);
     text-align: center;
+}
+
+/* --- Clocking by payroll number ----------------------------------------- */
+/* The fallback for when the camera cannot see somebody. The box itself is
+   always on screen so a keyboard or a USB number pad works without touching
+   anything; the on-screen keys unfold only once somebody starts, because a
+   permanent 4x3 grid does not fit above the fold on a 720p kiosk screen. */
+.mf-keypad {
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+    padding-top: 0.9rem;
+}
+
+.mf-keypad-title {
+    font-family: var(--mf-font-head);
+    font-size: 0.92rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mf-blue-100);
+    margin: 0 0 0.55rem;
+}
+
+.mf-keypad-entry {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.6rem;
+}
+
+/* Overrides the admin form input, which is white-on-white and far too small to
+   read across a workshop. Letter-spaced because these are read a digit at a
+   time, not as a word. */
+.mf-kiosk input.mf-keypad-input,
+input.mf-keypad-input {
+    width: 100%;
+    max-width: none;
+    font-family: var(--mf-font-head);
+    font-size: 1.6rem;
+    letter-spacing: 0.12em;
+    text-align: center;
+    padding: 0.5rem 0.6rem;
+    background: rgba(255, 255, 255, 0.07);
+    border: 2px solid var(--mf-blue-500);
+    border-radius: var(--mf-radius);
+    color: var(--mf-white);
+}
+
+input.mf-keypad-input::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 1.05rem;
+    letter-spacing: 0.04em;
+    text-transform: none;
+}
+
+input.mf-keypad-input:focus {
+    outline: none;
+    border-color: var(--mf-white);
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.mf-keypad-go {
+    font-family: var(--mf-font-head);
+    font-size: 1.15rem;
+    padding: 0.5rem 1.3rem;
+    border: none;
+    border-radius: var(--mf-radius);
+    background: var(--mf-blue-500);
+    color: var(--mf-white);
+    cursor: pointer;
+}
+
+.mf-keypad-go:hover:not(:disabled) {
+    background: #1a86dc;
+}
+
+.mf-keypad-go:disabled {
+    background: var(--mf-grey-600);
+    color: var(--mf-blue-100);
+    cursor: default;
+}
+
+.mf-keypad-keys {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+}
+
+.mf-keypad-keys[hidden] {
+    display: none;
+}
+
+/* Sized for a gloved thumb: 3.2rem clears the 44px minimum touch target with
+   room to spare, which matters more here than saving a centimetre. */
+.mf-keypad-keys button {
+    font-family: var(--mf-font-head);
+    font-size: 1.5rem;
+    min-height: 3.2rem;
+    background: rgba(255, 255, 255, 0.07);
+    border: 2px solid var(--mf-blue-500);
+    border-radius: var(--mf-radius);
+    color: var(--mf-white);
+    cursor: pointer;
+    /* Stops a long press selecting the digit or firing the OS magnifier. */
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+.mf-keypad-keys button:hover {
+    background: var(--mf-blue-700);
+}
+
+.mf-keypad-keys button:active {
+    background: var(--mf-blue-500);
+}
+
+.mf-keypad-keys button.mf-keypad-alt {
+    font-size: 1.05rem;
+    border-color: var(--mf-grey-600);
+    color: var(--mf-blue-100);
+}
+
+/* Short screens - a 1024x600 panel is a common kiosk. Everything above the keys
+   gives up a little height so the bottom row stays on the glass: a Clear key
+   somebody cannot reach is worse than a slightly smaller name. */
+@media (max-height: 700px) {
+    .mf-kiosk-panel {
+        gap: 0.7rem;
+    }
+
+    .mf-kiosk-result {
+        min-height: 5rem;
+        padding: 0.7rem;
+    }
+
+    .mf-result-name {
+        font-size: 1.6rem;
+    }
+
+    .mf-result-time {
+        font-size: 2rem;
+    }
+
+    .mf-scan-btn {
+        font-size: 1.25rem;
+        padding: 0.7rem 1rem;
+    }
+
+    .mf-keypad {
+        padding-top: 0.6rem;
+    }
+
+    .mf-keypad-title {
+        margin-bottom: 0.4rem;
+    }
+
+    .mf-keypad-keys {
+        gap: 0.4rem;
+        margin-top: 0.4rem;
+    }
+
+    .mf-keypad-keys button {
+        min-height: 2.2rem;
+        font-size: 1.25rem;
+    }
+
+    .mf-kiosk input.mf-keypad-input,
+    input.mf-keypad-input {
+        font-size: 1.3rem;
+        padding: 0.35rem 0.6rem;
+    }
 }
 
 /* --- Enrolment / camera check thumbnails -------------------------------- */

@@ -13,6 +13,11 @@ Two clocking paths exist:
   camera two hours into a shift would clock you out.
 * **Button press** - ``/scan`` recognises and records in one step, for the Scan,
   Clock in and Clock out buttons.
+* **Payroll number** - ``/payroll`` clocks whoever owns the number typed in on
+  the keypad. This one recognises nobody: a payroll number is an identifier and
+  not a secret, so the entry is somebody's own word for who they are. It is
+  stored with method ``keypad`` for exactly that reason, and the office can see
+  which entries were typed rather than recognised.
 
 Whoever is recognised is clocked to the opposite of their current state: clocked
 in becomes clocked out, clocked out becomes clocked in. Nothing is ever refused
@@ -34,6 +39,7 @@ from ..models import (
     METHOD_AUTO,
     METHOD_FACE,
     METHOD_FINGER,
+    METHOD_KEYPAD,
     Employee,
     utcnow,
 )
@@ -104,6 +110,7 @@ def index():
         auto_rearm_seconds=current_app.config["AUTO_REARM_SECONDS"],
         auto_latched_poll_ms=current_app.config["AUTO_LATCHED_POLL_MS"],
         auto_idle_poll_ms=current_app.config["AUTO_IDLE_POLL_MS"],
+        keypad_mode=current_app.config["KIOSK_KEYPAD_MODE"],
     )
 
 
@@ -484,6 +491,89 @@ def api_fingerprint():
     db.session.commit()
 
     # No confidence figure: the device reported a match, not a similarity.
+    return jsonify(**_result_payload(employee, result, None))
+
+
+# --------------------------------------------------------------------------
+# Payroll-number clocking
+# --------------------------------------------------------------------------
+#: A payroll reference is at most 32 characters in the database, so anything
+#: longer is a stuck key or a paste, not a number somebody meant to type.
+_MAX_REF_LENGTH = 32
+
+
+@bp.post("/api/kiosk/payroll")
+@csrf.exempt
+@require_kiosk_token
+@rate_limit("kiosk_payroll", "RECOGNISE_RATE_LIMIT", "RECOGNISE_RATE_WINDOW")
+def api_payroll():
+    """Clock whoever owns the payroll number typed in at the kiosk.
+
+    Expects JSON ``{"payroll_ref": "E042", "direction": null}``.
+
+    **This path recognises nobody.** A payroll number is printed on payslips and
+    known to colleagues, so anybody who knows a number can clock as that person.
+    That is the deliberate trade for having a way in when the camera cannot see
+    somebody, and it is why the entry is written with ``METHOD_KEYPAD``: the log,
+    the timesheets and the dashboard can all tell a typed entry from a
+    recognised one.
+
+    Rate limited like the recognition endpoints, so the keypad cannot be used to
+    work through the numbers from the front of the queue.
+    """
+    if not current_app.config["KIOSK_KEYPAD_MODE"]:
+        return (
+            jsonify(
+                ok=False,
+                code="keypad_disabled",
+                message="Clocking by payroll number is switched off.",
+            ),
+            403,
+        )
+
+    payload = request.get_json(silent=True) or {}
+    reference = str(payload.get("payroll_ref") or "").strip()
+    if not reference or len(reference) > _MAX_REF_LENGTH:
+        return (
+            jsonify(
+                ok=False,
+                code="bad_request",
+                message="Enter your payroll number.",
+            ),
+            400,
+        )
+
+    direction = payload.get("direction")
+    if direction is not None and direction not in DIRECTIONS:
+        return jsonify(ok=False, code="bad_request", message="Unknown direction."), 400
+
+    employee = attendance.find_by_payroll_ref(reference)
+    if employee is None:
+        # Logged without the number itself being treated as a secret - it is not
+        # one - because a run of these usually means the numbers on the shop
+        # floor do not match the ones in the database.
+        current_app.logger.info("Unknown payroll number at kiosk: %r", reference)
+        return jsonify(
+            ok=False,
+            code="ref_unknown",
+            message="That payroll number is not recognised. Please see the office.",
+        )
+
+    if not employee.is_active:
+        return jsonify(
+            ok=False,
+            code="employee_inactive",
+            message="That record is not active. Please see the office.",
+        )
+
+    result = attendance.record_clock(
+        employee,
+        direction=direction,
+        method=METHOD_KEYPAD,
+        device_label=current_app.config["KIOSK_DEVICE_LABEL"],
+        cooldown_seconds=current_app.config["CLOCK_COOLDOWN_SECONDS"],
+    )
+    # No confidence figure: nothing was matched against anything.
     return jsonify(**_result_payload(employee, result, None))
 
 

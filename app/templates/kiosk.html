@@ -47,6 +47,42 @@
                 <button id="scan-out" type="button">Clock out</button>
             </div>
 
+            <!-- Clocking by payroll number: the way in when the camera cannot
+                 see somebody - a plastered hand, a hood up, a dusty lens, or a
+                 new starter not yet enrolled. The box takes a physical keyboard
+                 (or a USB number pad) directly; the on-screen keys are there for
+                 touch and mouse. -->
+            {% if keypad_mode %}
+            <section class="mf-keypad" id="keypad">
+                <h2 class="mf-keypad-title">Or clock with your payroll number</h2>
+                <div class="mf-keypad-entry">
+                    <input class="mf-keypad-input" id="keypad-input" type="text"
+                           inputmode="numeric" autocomplete="off" autocapitalize="off"
+                           spellcheck="false" maxlength="32"
+                           aria-label="Payroll number"
+                           placeholder="Payroll number">
+                    <button class="mf-keypad-go" id="keypad-go" type="button" disabled>
+                        Clock
+                    </button>
+                </div>
+                <div class="mf-keypad-keys" id="keypad-keys" hidden>
+                    <button type="button" data-key="1">1</button>
+                    <button type="button" data-key="2">2</button>
+                    <button type="button" data-key="3">3</button>
+                    <button type="button" data-key="4">4</button>
+                    <button type="button" data-key="5">5</button>
+                    <button type="button" data-key="6">6</button>
+                    <button type="button" data-key="7">7</button>
+                    <button type="button" data-key="8">8</button>
+                    <button type="button" data-key="9">9</button>
+                    <button type="button" data-key="clear" class="mf-keypad-alt">Clear</button>
+                    <button type="button" data-key="0">0</button>
+                    <button type="button" data-key="back" class="mf-keypad-alt"
+                            aria-label="Delete">&#9003;</button>
+                </div>
+            </section>
+            {% endif %}
+
             <div class="mf-onsite" id="onsite">&nbsp;</div>
 
             <!-- Diagnostics, shown only with ?debug=1 on the URL. Tuning a kiosk
@@ -79,6 +115,8 @@
         rearmSeconds: {{ auto_rearm_seconds | tojson }},
         latchedPollMs: {{ auto_latched_poll_ms | tojson }},
         idlePollMs: {{ auto_idle_poll_ms | tojson }},
+        keypadMode: {{ keypad_mode | tojson }},
+        payrollUrl: {{ url_for('kiosk.api_payroll') | tojson }},
         debug: {{ (request.args.get('debug') == '1') | tojson }}
     };
 </script>

@@ -19,6 +19,10 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Automatic direction: a scan records the opposite of your last entry, so nobody
   has to remember which button to press. Explicit **Clock in** / **Clock out**
   buttons are there when needed, and override the hands-free interval.
+- **Payroll number**: a box and an on-screen keypad for anybody the camera
+  cannot see. Takes touch, mouse and keyboard. See
+  [Clocking by payroll number](#clocking-by-payroll-number) — including what you
+  are trading away by switching it on.
 - Shows a count of who is on site.
 - Space or Enter also triggers a scan, so a cheap USB footswitch wired as a
   keyboard works as the trigger. Escape cancels a pending automatic entry.
@@ -80,6 +84,52 @@ no GPU, and nothing to install beyond `pip install -r requirements.txt`.
 - Manual entry and voiding for corrections — both fully audited.
 - Camera check: measures what your camera actually produces so the recognition
   thresholds can be set from real numbers rather than guesses.
+
+---
+
+## Clocking by payroll number
+
+The third way in, for when the camera cannot see somebody: a plastered hand held
+over the face, a hood up in January, a lens nobody has wiped since Tuesday, or a
+new starter who has not been enrolled yet. Without it those people go to the
+office and somebody types the entry in by hand.
+
+A box sits under the Clock in / Clock out buttons on the kiosk. It takes input
+three ways, all landing in the same place:
+
+| Input | How |
+|---|---|
+| Touch, mouse | The on-screen keys, which unfold as soon as the box is used. |
+| Keyboard | Type straight into the box; **Enter** clocks, **Escape** clears. |
+| USB number pad | A digit pressed with nothing else focused adopts the box, so a wedge clocks somebody without a finger going near the screen. |
+
+The number is matched case-insensitively with surrounding spaces trimmed, so
+`e042` and ` E042 ` both find E042. A number that is not recognised is left on
+screen so a single mistyped digit can be corrected rather than retyped. The same
+alternation and cooldown rules apply as to a face scan: the entry is the
+opposite of the last one, and pressing Clock twice does not clock somebody in
+and straight back out.
+
+### What you are trading away
+
+**A payroll number is an identifier, not a secret.** It is printed on payslips,
+written on job sheets and known to colleagues. Anybody who knows a number can
+clock as that person. There is no PIN — adding one would mean a credential to
+issue, store and reset for every employee, and that is a bigger change than this
+is.
+
+Two things make the trade visible rather than silent:
+
+- Every entry made this way is written with method **`keypad`**, distinct from
+  `face`, `auto`, `finger` and `manual`. It shows in the dashboard's Latest
+  activity, in the full-detail timesheet CSV, and in the event log — so "how was
+  this entry made?" always has an answer.
+- The endpoint is rate limited like the recognition ones, so the keypad cannot
+  be used to work steadily through the numbers from the front of the queue.
+
+If that trade is not acceptable on your floor, set `KIOSK_KEYPAD_MODE=false`.
+The box disappears from the kiosk and the endpoint refuses outright — the page
+is not the only thing that stops.
 
 ---
 

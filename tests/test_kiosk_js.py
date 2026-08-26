@@ -17,6 +17,10 @@ the network, then drives the real ``kiosk.js`` with fake timers and asserts that
 * the next person in a queue is served without the scene emptying;
 * a second person clocks while the first person's result is still on screen.
 
+``tests/js/keypad_test.js`` covers clocking by payroll number: touch, mouse and
+keyboard entry into one box, and - the reason it exists - that adding a text box
+to the kiosk did not break the footswitch, which is wired to Space and Enter.
+
 ``tests/js/dialogs_test.js`` covers the back-office add/edit popups, where the
 failure that matters is an edit dialog that closes without leaving its URL - the
 next "Add" click would then overwrite the record instead of adding one.
@@ -58,6 +62,28 @@ def test_kiosk_state_machine():
     )
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"kiosk.js harness reported failures:\n{output}"
+    assert "checks passed" in output
+    assert "FAIL" not in output, output
+
+
+@needs_node
+def test_kiosk_payroll_keypad():
+    """Clocking by typing a payroll number, through all three input methods.
+
+    The check that earns its keep is the last one: focus left in the number box
+    must not swallow a footswitch press. That would be reported as "the
+    footswitch has stopped working", with nothing to connect it to the keypad.
+    """
+    harness = HARNESS.parent / "keypad_test.js"
+    result = subprocess.run(
+        [NODE, str(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=HARNESS.parent.parent.parent,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"keypad harness reported failures:\n{output}"
     assert "checks passed" in output
     assert "FAIL" not in output, output
 

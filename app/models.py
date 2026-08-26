@@ -45,6 +45,12 @@ METHOD_MANUAL = "manual"
 # Recorded by a fingerprint reader. The reader matches the finger itself and
 # reports which of its own slots matched; see FingerprintCredential.
 METHOD_FINGER = "finger"
+# Typed in at the kiosk as a payroll number. Kept distinct from every other
+# method on purpose: a payroll number is an identifier, not a secret - it is
+# printed on payslips and known to colleagues - so an entry made this way is
+# somebody's own word for who they are, not a biometric match. Anything reading
+# the log can tell the two apart, which is the point.
+METHOD_KEYPAD = "keypad"
 
 # How somebody is paid. Four-weekly staff are paid from clocked hours and appear
 # on the payroll master sheet; salaried staff are paid a fixed amount regardless

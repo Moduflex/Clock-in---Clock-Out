@@ -124,6 +124,16 @@ class Config:
     # --- Kiosk ------------------------------------------------------------
     KIOSK_TOKEN = os.getenv("KIOSK_TOKEN", "")
     KIOSK_DEVICE_LABEL = os.getenv("KIOSK_DEVICE_LABEL", "Kiosk")
+    # Let somebody clock by typing their payroll number, for when the camera
+    # cannot see them - a plastered hand, a hood up in winter, a dusty lens, or
+    # a new starter not yet enrolled.
+    #
+    # A payroll number is an IDENTIFIER, NOT A SECRET: it is printed on payslips
+    # and known to colleagues, so anybody who knows a number can clock as that
+    # person. Entries made this way are recorded with method "keypad" so the
+    # office can see exactly which ones were typed rather than recognised. Turn
+    # this off if that trade is not acceptable on your floor.
+    KIOSK_KEYPAD_MODE = _bool("KIOSK_KEYPAD_MODE", True)
 
     # --- Hands-free (automatic) clocking ----------------------------------
     # The kiosk watches for a face and clocks people with no button press.

@@ -22,7 +22,7 @@ import datetime as dt
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..extensions import db
 from ..models import (
@@ -199,6 +199,28 @@ def find_fingerprint(device_label: str, finger_id: int) -> FingerprintCredential
             FingerprintCredential.device_label == device_label,
             FingerprintCredential.finger_id == finger_id,
             FingerprintCredential.is_active.is_(True),
+        )
+    ).first()
+
+
+def find_by_payroll_ref(reference: str) -> Employee | None:
+    """The employee whose payroll reference is *reference*, if there is one.
+
+    Matched case-insensitively and with the surrounding whitespace trimmed,
+    because this is typed in on a workshop touchscreen: "e042" and " E042 "
+    are the same person as "E042", and refusing them would only teach people
+    that the keypad does not work.
+
+    The joke record is excluded like everywhere else, so it cannot be clocked
+    by typing its reference.
+    """
+    cleaned = (reference or "").strip()
+    if not cleaned:
+        return None
+    return db.session.scalars(
+        select(Employee).where(
+            func.lower(Employee.payroll_ref) == cleaned.lower(),
+            visible_employee_clause(),
         )
     ).first()
 
