@@ -287,6 +287,26 @@ class Config:
     LOGIN_RATE_LIMIT = _int("LOGIN_RATE_LIMIT", 10)
     LOGIN_RATE_WINDOW = _int("LOGIN_RATE_WINDOW", 300)
 
+    # --- Running behind a reverse proxy -----------------------------------
+    # How many proxies sit in front of this app. 0 means none, and the
+    # X-Forwarded-* headers are ignored - the right answer on the office LAN,
+    # where anything on the network could otherwise send those headers and
+    # claim to be somebody else.
+    #
+    # Set this to 1 on a hosting platform (DigitalOcean App Platform, Heroku,
+    # Render), where every request arrives through the platform's load
+    # balancer. Without it the app sees the *balancer's* address as the client
+    # address, which breaks two things quietly:
+    #
+    #   * Flask-Login's "strong" session protection ties the session to the
+    #     client address, and the balancer's address varies between requests -
+    #     so signing in succeeds and the very next page throws you back to the
+    #     login form with no error shown;
+    #   * the login rate limit is keyed on the client address, so every user
+    #     shares one bucket and ten fumbled passwords lock out the whole
+    #     company for five minutes.
+    TRUSTED_PROXY_COUNT = _int("TRUSTED_PROXY_COUNT", 0)
+
     # --- Session hardening ------------------------------------------------
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"

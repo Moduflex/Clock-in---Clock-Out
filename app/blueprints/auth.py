@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required, login_user, logout_user
 from flask_wtf import FlaskForm
 from sqlalchemy import select
@@ -13,7 +21,7 @@ from wtforms.validators import DataRequired, Length
 
 from ..extensions import db
 from ..models import AdminUser, utcnow
-from ..security import rate_limit
+from ..security import rate_limit, record_attempt
 
 bp = Blueprint("auth", __name__)
 
@@ -39,7 +47,18 @@ def _safe_next(target: str | None) -> str:
 
 
 @bp.route("/login", methods=["GET", "POST"])
-@rate_limit("login", "LOGIN_RATE_LIMIT", "LOGIN_RATE_WINDOW", as_json=False)
+# Only a submitted form is rate limited, and below only a *failed* one is
+# counted: a limit spent on opening the page locks people out for reloading it,
+# and one spent on successful sign-ins locks out an office where several people
+# share one address.
+@rate_limit(
+    "login",
+    "LOGIN_RATE_LIMIT",
+    "LOGIN_RATE_WINDOW",
+    as_json=False,
+    methods={"POST"},
+    record=False,
+)
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("admin.dashboard"))
@@ -53,6 +72,7 @@ def login():
         # The same message for every failure, so the form cannot be used to
         # discover which usernames exist.
         if user is None or not user.check_password(form.password.data or ""):
+            record_attempt("login", current_app.config["LOGIN_RATE_WINDOW"])
             flash("Incorrect username or password.", "error")
             return render_template("login.html", form=form), 401
         if not user.is_active:

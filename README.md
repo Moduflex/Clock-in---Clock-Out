@@ -675,6 +675,23 @@ kiosk machine.
 
 `schema.sql` holds the MySQL DDL if a DBA wants to review or apply it directly.
 
+### If the app runs behind a load balancer
+
+On a hosting platform every request reaches the app through the platform's own
+load balancer, so `request.remote_addr` is the *balancer*, not the browser. The
+login rate limit is keyed on that address, so without telling the app a proxy is
+there, all users share a single bucket — one person guessing badly locks out
+everybody, and the lockout shows as a bare "Too many attempts. Please wait a
+moment." page that reads exactly like a wrong password.
+
+Set `TRUSTED_PROXY_COUNT=1` on DigitalOcean App Platform, Heroku or Render. It
+defaults to `0`, which ignores `X-Forwarded-*` — the right answer on the office
+LAN, where nothing strips those headers and trusting them would let anything on
+the network claim to be any address it liked.
+
+The limit itself only counts **failed** sign-ins from a submitted form. Opening
+the login page, reloading it, and signing in correctly all cost nothing.
+
 ### If the database is not on this machine
 
 A managed database (DigitalOcean, RDS, Azure) is reached across the public

@@ -23,26 +23,55 @@ _buckets_lock = threading.Lock()
 
 
 def _client_key(scope: str) -> str:
-    # X-Forwarded-For is only trustworthy behind a proxy that sets it; on a LAN
-    # deployment remote_addr is the honest answer.
+    # remote_addr is the honest answer on a LAN deployment. Behind a hosting
+    # platform's load balancer it is the balancer, which would put every user in
+    # one bucket - TRUSTED_PROXY_COUNT installs ProxyFix so this reads the real
+    # client again. See _trust_proxy_headers in app/__init__.py.
     return f"{scope}:{request.remote_addr or 'unknown'}"
 
 
 def check_rate(scope: str, limit: int, window_seconds: int) -> bool:
-    """Return True if this caller is within *limit* requests per *window*."""
+    """Return True if this caller is within *limit* requests per *window*.
+
+    Counts the current request. Use :func:`within_rate` and
+    :func:`record_attempt` instead where only some requests should count.
+    """
+    if limit <= 0:
+        return True
+    if not within_rate(scope, limit, window_seconds):
+        return False
+    record_attempt(scope, window_seconds)
+    return True
+
+
+def within_rate(scope: str, limit: int, window_seconds: int) -> bool:
+    """Return True if this caller is under *limit*, without counting anything."""
     if limit <= 0:
         return True
     key = _client_key(scope)
-    now = time.monotonic()
-    cutoff = now - window_seconds
+    cutoff = time.monotonic() - window_seconds
     with _buckets_lock:
         bucket = _buckets[key]
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
-        if len(bucket) >= limit:
-            return False
-        bucket.append(now)
-        return True
+        return len(bucket) < limit
+
+
+def record_attempt(scope: str, window_seconds: int) -> None:
+    """Count one attempt against this caller.
+
+    Kept separate so a limit can be spent on the thing worth limiting - a
+    *failed* sign-in - rather than on merely opening the page. A limit that
+    counts page views locks people out for reloading the login form, which
+    looks exactly like the password being wrong.
+    """
+    key = _client_key(scope)
+    cutoff = time.monotonic() - window_seconds
+    with _buckets_lock:
+        bucket = _buckets[key]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        bucket.append(time.monotonic())
 
 
 def reset_rate_limits() -> None:
@@ -51,15 +80,34 @@ def reset_rate_limits() -> None:
         _buckets.clear()
 
 
-def rate_limit(scope: str, limit_key: str, window_key: str, *, as_json: bool = True):
-    """Decorator applying a configurable rate limit to a view."""
+def rate_limit(
+    scope: str,
+    limit_key: str,
+    window_key: str,
+    *,
+    as_json: bool = True,
+    methods: set[str] | None = None,
+    record: bool = True,
+):
+    """Decorator applying a configurable rate limit to a view.
+
+    *methods* limits the check to those HTTP methods, so a page that both shows
+    a form and receives it does not spend the allowance on being looked at.
+    *record* False checks the limit without counting the request; the view then
+    calls :func:`record_attempt` itself, for when only failures should count.
+    """
 
     def decorator(view):
         @functools.wraps(view)
         def wrapper(*args, **kwargs):
+            if methods is not None and request.method not in methods:
+                return view(*args, **kwargs)
             limit = current_app.config.get(limit_key, 0)
             window = current_app.config.get(window_key, 60)
-            if not check_rate(scope, limit, window):
+            allowed = check_rate(scope, limit, window) if record else within_rate(
+                scope, limit, window
+            )
+            if not allowed:
                 if as_json:
                     return (
                         jsonify(

@@ -24,6 +24,7 @@ def create_app(config: Config | str | None = None) -> Flask:
     app.config["MYSQL_SSL_CA_FILE"] = settings.mysql_ca_file
 
     _configure_logging(app)
+    _trust_proxy_headers(app)
     _warn_on_weak_secrets(app)
 
     db.init_app(app)
@@ -52,6 +53,33 @@ def create_app(config: Config | str | None = None) -> Flask:
     _register_cli(app)
 
     return app
+
+
+def _trust_proxy_headers(app: Flask) -> None:
+    """Read the real client address from X-Forwarded-For, behind a proxy only.
+
+    On a hosting platform every request arrives through a load balancer, so
+    request.remote_addr is the balancer rather than the browser - and the
+    balancer's address changes from one request to the next. Flask-Login's
+    "strong" session protection reads that address, so a sign-in succeeds and
+    the next page silently throws the user back to the login form; the login
+    rate limit reads it too, so all users share a single bucket.
+
+    Only trusted when TRUSTED_PROXY_COUNT says a proxy is really there. These
+    headers are just request headers: on the office LAN, where nothing strips
+    them, trusting them would let anything on the network claim any address it
+    liked and walk past both protections.
+    """
+    count = app.config.get("TRUSTED_PROXY_COUNT", 0)
+    if count <= 0:
+        return
+
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=count, x_proto=count, x_host=count, x_prefix=count
+    )
+    app.logger.info("Trusting X-Forwarded-* from %d proxy/proxies in front.", count)
 
 
 def _configure_logging(app: Flask) -> None:
