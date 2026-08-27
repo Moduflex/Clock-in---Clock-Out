@@ -692,6 +692,30 @@ the network claim to be any address it liked.
 The limit itself only counts **failed** sign-ins from a submitted form. Opening
 the login page, reloading it, and signing in correctly all cost nothing.
 
+### If a correct password lands back on the login page
+
+Flask-Login ties a session to the client address and browser string. On
+`SESSION_PROTECTION=strong` it **destroys** the session the moment either
+appears to change — and it does so silently, so the sign-in succeeds, the
+redirect is issued, and the next page returns the user to the login form with
+no error on screen. It is indistinguishable from the password being wrong, and
+`last_login_at` still gets stamped, which is the tell: the server accepted the
+password and something threw the session away afterwards.
+
+Behind a load balancer, or on a laptop moving between wifi and mobile data, the
+address changes for entirely innocent reasons. The default is therefore `basic`,
+which marks such a session stale rather than destroying it; the signed
+HttpOnly/Secure/SameSite cookie and the CSRF token are what actually keep it
+honest. `strong` remains available for a deployment on one fixed network.
+
+Either way it is now written down. When a session is rejected the log says so,
+with the addresses involved:
+
+```
+WARNING  Session protection (basic) rejected a session: X-Forwarded-For=...
+         remote_addr=... The client looks different from the one that signed in.
+```
+
 ### If the database is not on this machine
 
 A managed database (DigitalOcean, RDS, Azure) is reached across the public

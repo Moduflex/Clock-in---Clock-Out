@@ -30,6 +30,7 @@ def create_app(config: Config | str | None = None) -> Flask:
     db.init_app(app)
     csrf.init_app(app)
     login_manager.init_app(app)
+    _log_session_protection(app)
 
     from .models import AdminUser  # imported here to avoid a circular import
 
@@ -53,6 +54,43 @@ def create_app(config: Config | str | None = None) -> Flask:
     _register_cli(app)
 
     return app
+
+
+def _log_session_protection(app: Flask) -> None:
+    """Say in the log when a session is thrown out for looking like a new client.
+
+    Session protection failing is silent by design: the user is simply anonymous
+    again, so a correct password appears to bounce off the login page with no
+    error. That is indistinguishable from a dozen other faults unless something
+    writes it down, so this does.
+    """
+    from flask_login.signals import session_protected
+
+    def note(sender, **extra):  # pragma: no cover - exercised via the log
+        from flask import request, session
+
+        # Flask-Login sends this for anonymous visitors too - a session holding
+        # only a CSRF token has no identifier to match, so every first visit
+        # would otherwise be logged as a rejection. Only a session that was
+        # actually signed in is worth a line.
+        if not session.get("_user_id"):
+            return
+
+        app.logger.warning(
+            "Session protection (%s) rejected a session: X-Forwarded-For=%r "
+            "remote_addr=%r User-Agent=%r. The client looks different from the "
+            "one that signed in. If this repeats behind a load balancer, the "
+            "address is the balancer's rather than the browser's - set "
+            "TRUSTED_PROXY_COUNT=1.",
+            app.config.get("SESSION_PROTECTION"),
+            request.headers.get("X-Forwarded-For"),
+            request.remote_addr,
+            (request.headers.get("User-Agent") or "")[:60],
+        )
+
+    # weak=False, or the receiver is collected and the signal quietly stops.
+    session_protected.connect(note, sender=app, weak=False)
+    app.extensions["session_protection_logger"] = note
 
 
 def _trust_proxy_headers(app: Flask) -> None:

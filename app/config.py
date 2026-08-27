@@ -308,6 +308,16 @@ class Config:
     TRUSTED_PROXY_COUNT = _int("TRUSTED_PROXY_COUNT", 0)
 
     # --- Session hardening ------------------------------------------------
+    # Flask-Login ties a session to the client address and browser. On "strong"
+    # it DESTROYS the session the moment either appears to change, and the user
+    # lands back on the login form with no error shown - which looks exactly
+    # like the password having been rejected. Behind a load balancer, or on a
+    # phone moving between wifi and mobile data, that address changes for
+    # entirely innocent reasons. "basic" marks such a session stale instead of
+    # destroying it; the signed HttpOnly/Secure/SameSite cookie and the CSRF
+    # token are what actually keep the session honest. Flask-Login reads this
+    # config key itself.
+    SESSION_PROTECTION = (os.getenv("SESSION_PROTECTION") or "basic").strip().lower()
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = False  # switched on in ProductionConfig
